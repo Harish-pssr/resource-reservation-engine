@@ -2,7 +2,7 @@
 //
 // Settings come from the environment (see internal/config):
 //
-//	STRATEGY         locking (default), optimistic or naive
+//	STRATEGY         locking (default), optimistic, fastpath (Redis gate + locking) or naive
 //	SCHEMA           protected (default) or unprotected; unprotected has no unique-index backstop
 //	PAYMENT_PROFILE  fast (default) or realistic
 //	HOLD_TTL         hold duration, e.g. 30s (default 300s)
@@ -18,11 +18,14 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/redis/go-redis/v9"
+
 	"resourcereservation/internal/config"
 	"resourcereservation/internal/db"
 	"resourcereservation/internal/httpapi"
 	"resourcereservation/internal/payment"
 	"resourcereservation/internal/reservation"
+	"resourcereservation/internal/reservation/fastpath"
 	"resourcereservation/internal/reservation/locking"
 	"resourcereservation/internal/reservation/naive"
 	"resourcereservation/internal/reservation/optimistic"
@@ -61,10 +64,13 @@ func run() error {
 		svc = locking.New(pool)
 	case "optimistic":
 		svc = optimistic.New(pool)
+	case "fastpath":
+		gate := fastpath.NewRedisGate(redis.NewClient(&redis.Options{Addr: cfg.RedisAddr}), "rre:")
+		svc = fastpath.New(locking.New(pool), gate, pool, fastpath.DefaultConfig())
 	case "naive":
 		svc = naive.New(pool)
 	default:
-		return errors.New("unknown STRATEGY " + strategy + " (want locking, optimistic or naive)")
+		return errors.New("unknown STRATEGY " + strategy + " (want locking, optimistic, fastpath or naive)")
 	}
 	payCfg, err := payment.Profile(envOr("PAYMENT_PROFILE", "fast"))
 	if err != nil {
