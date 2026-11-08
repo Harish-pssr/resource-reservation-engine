@@ -4,7 +4,9 @@ package testdb
 import (
 	"context"
 	"fmt"
+	"math/rand/v2"
 	"net/url"
+	"os"
 	"testing"
 	"time"
 
@@ -22,7 +24,9 @@ func create(t *testing.T) (dbURL string) {
 	if err != nil {
 		t.Skipf("postgres not reachable (run scripts/up first): %v", err)
 	}
-	name := fmt.Sprintf("test_%d", time.Now().UnixNano())
+	// Parallel test packages run as separate processes, and the Windows clock is coarse, so the
+	// clock alone is not unique: add the process id and random bytes.
+	name := fmt.Sprintf("test_%d_%d_%08x", os.Getpid(), time.Now().UnixNano(), rand.Uint32())
 	if _, err := admin.Exec(ctx, "CREATE DATABASE "+name); err != nil {
 		admin.Close()
 		t.Fatalf("create database: %v", err)
