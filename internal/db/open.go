@@ -71,6 +71,7 @@ func Setup(ctx context.Context, url, schema string, protected bool, opts ...Opti
 	if protected {
 		dirs = append(dirs, "backstop")
 	}
+	dirs = append(dirs, "ops") // fault-injection settings exist in both variants
 	for _, d := range dirs {
 		if _, err := Migrate(ctx, pool, migrations.FS, d); err != nil {
 			pool.Close()
