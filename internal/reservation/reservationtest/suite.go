@@ -53,6 +53,8 @@ func Run(t *testing.T, newSvc Factory) {
 		{"late confirm after the new holder confirmed is rejected", lateConfirmAfterOtherConfirmed},
 		{"confirm retry is idempotent", confirmRetry},
 		{"confirm by another buyer is rejected", confirmWrongBuyer},
+		{"confirm with a stale version by the same buyer is rejected", confirmStaleVersionSameBuyer},
+		{"release with a stale version by the same buyer is a no-op", releaseStaleVersionSameBuyer},
 		{"multi-item confirm is all or nothing", confirmAllOrNothing},
 		{"release frees the item", releaseFrees},
 		{"release retry is a no-op", releaseRetry},
@@ -314,6 +316,31 @@ func confirmWrongBuyer(e *env) {
 	a := e.mustHold("a", longTTL, it[0])
 	want(e.t, "outcome", e.confirm(ref("b", a)).Outcome, reservation.HoldLost)
 	want(e.t, "bookings", e.bookings(it...), 0)
+}
+
+// The fencing counter (D3, D4) matters when the holder name alone cannot tell two holds apart:
+// the same buyer re-holds after their own hold expired, then a delayed call arrives carrying
+// the first hold's version.
+func confirmStaleVersionSameBuyer(e *env) {
+	_, it := e.newEvent(1)
+	first := e.mustHold("a", shortTTL, it[0])
+	time.Sleep(pastTTL)
+	second := e.mustHold("a", longTTL, it[0])
+	want(e.t, "version bumped", second.Items[0].HoldVersion, first.Items[0].HoldVersion+1)
+	want(e.t, "stale confirm", e.confirm(ref("a", first)).Outcome, reservation.HoldLost)
+	want(e.t, "bookings after stale confirm", e.bookings(it...), 0)
+	want(e.t, "current confirm", e.confirm(ref("a", second)).Outcome, reservation.Confirmed)
+}
+
+func releaseStaleVersionSameBuyer(e *env) {
+	_, it := e.newEvent(1)
+	first := e.mustHold("a", shortTTL, it[0])
+	time.Sleep(pastTTL)
+	second := e.mustHold("a", longTTL, it[0])
+	want(e.t, "stale release", e.release(ref("a", first)), reservation.NotHeld)
+	state, _, _ := e.itemRow(it[0])
+	want(e.t, "current hold survives", state, "held")
+	want(e.t, "current confirm", e.confirm(ref("a", second)).Outcome, reservation.Confirmed)
 }
 
 func confirmAllOrNothing(e *env) {
