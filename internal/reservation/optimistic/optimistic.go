@@ -263,3 +263,8 @@ func (s *Store) Availability(ctx context.Context, eventID int64) (int, error) {
 		eventID).Scan(&n)
 	return n, err
 }
+
+// Counters exposes the wasted-work counters for /metrics.
+func (s *Store) Counters() map[string]int64 {
+	return map[string]int64{"conflicts": s.Conflicts.Load(), "rereads": s.Rereads.Load()}
+}

@@ -12,6 +12,7 @@ import (
 	"context"
 	"errors"
 	"slices"
+	"sync/atomic"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -21,7 +22,11 @@ import (
 )
 
 // Store implements reservation.Service with row locks.
-type Store struct{ pool *pgxpool.Pool }
+type Store struct {
+	pool *pgxpool.Pool
+	// LockBusy counts holds refused because a row lock was taken (the NOWAIT outcome).
+	LockBusy atomic.Int64
+}
 
 // New returns a Store on the given pool.
 func New(pool *pgxpool.Pool) *Store { return &Store{pool: pool} }
@@ -43,6 +48,7 @@ func (s *Store) Hold(ctx context.Context, req reservation.HoldRequest) (reservat
 	locked, err := rowsql.Read(ctx, tx, ids, rowsql.NoWait, 0)
 	if err != nil {
 		if rowsql.IsConflict(err) {
+			s.LockBusy.Add(1)
 			return reservation.HoldResult{Outcome: reservation.LockBusy}, nil
 		}
 		return reservation.HoldResult{}, err
@@ -209,3 +215,6 @@ func (s *Store) Availability(ctx context.Context, eventID int64) (int, error) {
 		eventID).Scan(&n)
 	return n, err
 }
+
+// Counters exposes the strategy's counters for /metrics.
+func (s *Store) Counters() map[string]int64 { return map[string]int64{"lock_busy": s.LockBusy.Load()} }

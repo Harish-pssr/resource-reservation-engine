@@ -12,12 +12,14 @@ import (
 	"encoding/json"
 	"net/http"
 	"strconv"
+	"strings"
 	"sync/atomic"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"resourcereservation/internal/db"
+	"resourcereservation/internal/metrics"
 	"resourcereservation/internal/payment"
 	"resourcereservation/internal/reservation"
 )
@@ -29,6 +31,8 @@ type Deps struct {
 	Pool     *pgxpool.Pool // only used by POST /events (demo and benchmark setup)
 	HoldTTL  time.Duration
 	MaxItems int // largest request, 6 by default
+	// Metrics receives request counters and latency histograms; New creates one if nil.
+	Metrics *metrics.Registry
 }
 
 // Stats counts outcomes the benchmarks report (D4): how often a late confirm won, and how
@@ -48,12 +52,18 @@ type Handler struct {
 	d     Deps
 	Stats Stats
 	mux   *http.ServeMux
+
+	inflight    atomic.Int64
+	maxInflight atomic.Int64
 }
 
 // New builds the handler.
 func New(d Deps) *Handler {
 	if d.MaxItems == 0 {
 		d.MaxItems = 6
+	}
+	if d.Metrics == nil {
+		d.Metrics = metrics.NewRegistry()
 	}
 	h := &Handler{d: d, mux: http.NewServeMux()}
 	h.mux.HandleFunc("POST /events", h.createEvent)
@@ -62,10 +72,46 @@ func New(d Deps) *Handler {
 	h.mux.HandleFunc("POST /holds/confirm", h.confirm)
 	h.mux.HandleFunc("POST /holds/release", h.release)
 	h.mux.HandleFunc("GET /stats", h.stats)
+	h.mux.HandleFunc("GET /metrics", h.metrics)
 	return h
 }
 
-func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) { h.mux.ServeHTTP(w, r) }
+// statusWriter remembers the status code so the middleware can count it.
+type statusWriter struct {
+	http.ResponseWriter
+	status int
+}
+
+func (w *statusWriter) WriteHeader(code int) { w.status = code; w.ResponseWriter.WriteHeader(code) }
+
+// route is a low-cardinality name for a request, used as the metric key.
+func route(r *http.Request) string {
+	if strings.HasPrefix(r.URL.Path, "/events/") && strings.HasSuffix(r.URL.Path, "/availability") {
+		return r.Method + " /events/:id/availability"
+	}
+	return r.Method + " " + r.URL.Path
+}
+
+func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if r.URL.Path == "/metrics" { // reading the metrics must not change them
+		h.mux.ServeHTTP(w, r)
+		return
+	}
+	cur := h.inflight.Add(1)
+	for {
+		old := h.maxInflight.Load()
+		if cur <= old || h.maxInflight.CompareAndSwap(old, cur) {
+			break
+		}
+	}
+	start := time.Now()
+	sw := &statusWriter{ResponseWriter: w, status: http.StatusOK}
+	h.mux.ServeHTTP(sw, r)
+	h.inflight.Add(-1)
+	name := route(r)
+	h.d.Metrics.Counter("requests{" + name + "," + strconv.Itoa(sw.status) + "}").Add(1)
+	h.d.Metrics.Histogram("latency{" + name + "}").Observe(time.Since(start))
+}
 
 // ---- wire types ----
 
@@ -309,4 +355,23 @@ func (h *Handler) releaseDetached(ctx context.Context, ref reservation.HoldRef) 
 	defer cancel()
 	_, err := h.d.Service.Release(c, ref)
 	return err
+}
+
+// metrics reports what the API and the strategy counted, to explain a benchmark.
+func (h *Handler) metrics(w http.ResponseWriter, r *http.Request) {
+	strategy := map[string]int64{}
+	if cp, ok := h.d.Service.(reservation.CounterProvider); ok {
+		strategy = cp.Counters()
+	}
+	s := &h.Stats
+	writeJSON(w, http.StatusOK, map[string]any{
+		"api": h.d.Metrics.Snapshot(), "strategy": strategy,
+		"inflight": h.inflight.Load(), "max_inflight": h.maxInflight.Load(),
+		"outcomes": map[string]int64{
+			"confirmed_in_time": s.ConfirmedInTime.Load(), "confirmed_after_expiry": s.ConfirmedAfterExpiry.Load(),
+			"confirm_replayed": s.ConfirmReplayed.Load(), "paid_but_lost": s.PaidButLost.Load(),
+			"payment_failed": s.PaymentFailed.Load(), "payment_timed_out": s.PaymentTimedOut.Load(),
+			"payment_in_progress_replies": s.PaymentInProgress.Load(),
+		},
+	})
 }

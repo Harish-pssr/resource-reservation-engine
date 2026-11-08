@@ -145,3 +145,8 @@ func (s *Store) Availability(ctx context.Context, eventID int64) (int, error) {
 		eventID).Scan(&n)
 	return n, err
 }
+
+// Counters exposes how many double sales the database's unique index refused.
+func (s *Store) Counters() map[string]int64 {
+	return map[string]int64{"unique_violations": s.UniqueViolations.Load()}
+}

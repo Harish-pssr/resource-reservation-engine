@@ -192,3 +192,39 @@ func TestValidation(t *testing.T) {
 		t.Fatalf("an empty buyer must be refused: %d", code)
 	}
 }
+
+func TestMetricsExplainWhatHappened(t *testing.T) {
+	f := newFixture(t, 0.5, time.Millisecond)
+	f.hold("alice", "r1", f.items[0])
+	f.hold("bob", "r2", f.items[0]) // unavailable
+	get := func() map[string]any {
+		resp, err := http.Get(f.srv.URL + "/metrics")
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		var out map[string]any
+		json.NewDecoder(resp.Body).Decode(&out)
+		return out
+	}
+	m := get()
+	api := m["api"].(map[string]any)
+	counters := api["counters"].(map[string]any)
+	if counters["requests{POST /holds,201}"] != float64(1) || counters["requests{POST /holds,409}"] != float64(1) {
+		t.Fatalf("request counters: %v", counters)
+	}
+	if _, ok := m["strategy"].(map[string]any)["lock_busy"]; !ok {
+		t.Fatalf("the locking strategy's counters must be exposed: %v", m["strategy"])
+	}
+	hist := api["histograms"].(map[string]any)["latency{POST /holds}"].(map[string]any)
+	if hist["count"] != float64(2) {
+		t.Fatalf("latency histogram: %v", hist)
+	}
+	if m["max_inflight"].(float64) < 1 {
+		t.Fatalf("max_inflight: %v", m["max_inflight"])
+	}
+	again := get()["api"].(map[string]any)["counters"].(map[string]any)
+	if len(again) != len(counters) {
+		t.Fatal("reading /metrics must not change the metrics")
+	}
+}

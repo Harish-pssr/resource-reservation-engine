@@ -164,3 +164,17 @@ func (s *Store) Release(ctx context.Context, ref reservation.HoldRef) (reservati
 func (s *Store) Availability(ctx context.Context, eventID int64) (int, error) {
 	return s.inner.Availability(ctx, eventID)
 }
+
+// Counters exposes the gate's counters, and the inner strategy's if it has any.
+func (s *Store) Counters() map[string]int64 {
+	out := map[string]int64{
+		"gate_passed": s.Stats.GatePassed.Load(), "gate_rejected": s.Stats.GateRejected.Load(),
+		"gate_errors": s.Stats.GateErrors.Load(), "gate_learned": s.Stats.Learned.Load(),
+	}
+	if cp, ok := s.inner.(reservation.CounterProvider); ok {
+		for k, v := range cp.Counters() {
+			out["inner_"+k] = v
+		}
+	}
+	return out
+}

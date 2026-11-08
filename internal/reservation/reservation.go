@@ -87,3 +87,9 @@ type Service interface {
 	// Availability counts items of an event that are free or whose hold has expired (D3).
 	Availability(ctx context.Context, eventID int64) (int, error)
 }
+
+// CounterProvider is optionally implemented by a strategy to expose its internal counters
+// (conflicts, re-reads, gate hits, ...) at /metrics, so a benchmark can be explained.
+type CounterProvider interface {
+	Counters() map[string]int64
+}
