@@ -1,0 +1,27 @@
+# Local development infrastructure. Final benchmark numbers are NOT taken from Docker
+# on Windows; see docs/benchmarks.md for the environment used for published results.
+services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: reservation
+      POSTGRES_PASSWORD: reservation
+      POSTGRES_DB: reservation
+    ports:
+      - "55432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U reservation -d reservation"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+  redis:
+    image: redis:7
+    # No persistence on purpose: the fast path must stay correct when it loses all state (D8).
+    command: ["redis-server", "--save", "", "--appendonly", "no"]
+    ports:
+      - "56379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
