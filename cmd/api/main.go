@@ -6,6 +6,8 @@
 //	SCHEMA           protected (default) or unprotected; unprotected has no unique-index backstop
 //	PAYMENT_PROFILE  fast (default) or realistic
 //	HOLD_TTL         hold duration, e.g. 30s (default 300s)
+//	ROOM_RATE        waiting room admission rate in buyers per second; 0 (default) = no waiting room
+//	ROOM_MAX_QUEUE, ROOM_PASS_TTL, ROOM_HEARTBEAT_TTL  waiting room tuning
 package main
 
 import (
@@ -29,6 +31,7 @@ import (
 	"resourcereservation/internal/reservation/locking"
 	"resourcereservation/internal/reservation/naive"
 	"resourcereservation/internal/reservation/optimistic"
+	"resourcereservation/internal/waitingroom"
 )
 
 func main() {
@@ -77,9 +80,16 @@ func run() error {
 		return err
 	}
 
+	var room *waitingroom.Room
+	if cfg.RoomRate > 0 {
+		room = waitingroom.New(redis.NewClient(&redis.Options{Addr: cfg.RedisAddr}), "rroom:", waitingroom.Config{
+			Rate: cfg.RoomRate, MaxQueue: cfg.RoomMaxQueue, PassTTL: cfg.RoomPassTTL, HeartbeatTTL: cfg.RoomHeartbeatTTL})
+		go room.Run(ctx) // any number of API instances may run this: the rate budget lives in Redis
+	}
+
 	srv := &http.Server{
 		Addr:    cfg.HTTPAddr,
-		Handler: httpapi.New(httpapi.Deps{Service: svc, Payment: payment.New(payCfg), Pool: pool, HoldTTL: cfg.HoldTTL}),
+		Handler: httpapi.New(httpapi.Deps{Service: svc, Payment: payment.New(payCfg), Pool: pool, HoldTTL: cfg.HoldTTL, Room: room}),
 	}
 	go func() {
 		<-ctx.Done()
@@ -87,7 +97,7 @@ func run() error {
 		defer cancel()
 		srv.Shutdown(shutdown)
 	}()
-	slog.Info("listening", "addr", cfg.HTTPAddr, "strategy", strategy, "schema", schema, "hold_ttl", cfg.HoldTTL)
+	slog.Info("listening", "addr", cfg.HTTPAddr, "strategy", strategy, "schema", schema, "hold_ttl", cfg.HoldTTL, "room_rate", cfg.RoomRate)
 	if err := srv.ListenAndServe(); !errors.Is(err, http.ErrServerClosed) {
 		return err
 	}

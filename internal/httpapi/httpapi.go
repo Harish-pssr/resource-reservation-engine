@@ -10,6 +10,7 @@ package httpapi
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strconv"
 	"strings"
@@ -22,6 +23,7 @@ import (
 	"resourcereservation/internal/metrics"
 	"resourcereservation/internal/payment"
 	"resourcereservation/internal/reservation"
+	"resourcereservation/internal/waitingroom"
 )
 
 // Deps are the pieces the handler needs.
@@ -31,6 +33,8 @@ type Deps struct {
 	Pool     *pgxpool.Pool // only used by POST /events (demo and benchmark setup)
 	HoldTTL  time.Duration
 	MaxItems int // largest request, 6 by default
+	// Room is the waiting room (D9); nil disables admission control.
+	Room *waitingroom.Room
 	// Metrics receives request counters and latency histograms; New creates one if nil.
 	Metrics *metrics.Registry
 }
@@ -45,6 +49,7 @@ type Stats struct {
 	PaymentFailed        atomic.Int64
 	PaymentTimedOut      atomic.Int64
 	PaymentInProgress    atomic.Int64
+	RoomFailOpen         atomic.Int64 // requests let through because Redis was unreachable (D9)
 }
 
 // Handler serves the API.
@@ -71,6 +76,8 @@ func New(d Deps) *Handler {
 	h.mux.HandleFunc("POST /holds", h.hold)
 	h.mux.HandleFunc("POST /holds/confirm", h.confirm)
 	h.mux.HandleFunc("POST /holds/release", h.release)
+	h.mux.HandleFunc("POST /queue/join", h.queueJoin)
+	h.mux.HandleFunc("GET /queue/{buyer}", h.queuePoll)
 	h.mux.HandleFunc("GET /stats", h.stats)
 	h.mux.HandleFunc("GET /metrics", h.metrics)
 	return h
@@ -88,6 +95,9 @@ func (w *statusWriter) WriteHeader(code int) { w.status = code; w.ResponseWriter
 func route(r *http.Request) string {
 	if strings.HasPrefix(r.URL.Path, "/events/") && strings.HasSuffix(r.URL.Path, "/availability") {
 		return r.Method + " /events/:id/availability"
+	}
+	if strings.HasPrefix(r.URL.Path, "/queue/") && r.URL.Path != "/queue/join" {
+		return r.Method + " /queue/:buyer"
 	}
 	return r.Method + " " + r.URL.Path
 }
@@ -209,6 +219,9 @@ func (h *Handler) hold(w http.ResponseWriter, r *http.Request) {
 	}
 	if b.BuyerID == "" || b.RequestID == "" || len(b.ItemIDs) == 0 || len(b.ItemIDs) > h.d.MaxItems {
 		fail(w, http.StatusBadRequest, "buyer_id, request_id and 1.."+strconv.Itoa(h.d.MaxItems)+" item_ids are required")
+		return
+	}
+	if !h.admitted(w, r, b.BuyerID) {
 		return
 	}
 	res, err := h.d.Service.Hold(r.Context(), reservation.HoldRequest{
@@ -363,6 +376,15 @@ func (h *Handler) metrics(w http.ResponseWriter, r *http.Request) {
 	if cp, ok := h.d.Service.(reservation.CounterProvider); ok {
 		strategy = cp.Counters()
 	}
+	if h.d.Room != nil {
+		for k, v := range h.d.Room.Counters() {
+			strategy[k] = v
+		}
+		strategy["room_fail_open"] = h.Stats.RoomFailOpen.Load()
+		if n, err := h.d.Room.QueueLength(r.Context()); err == nil {
+			strategy["room_queue_length"] = n // queue depth now
+		}
+	}
 	s := &h.Stats
 	writeJSON(w, http.StatusOK, map[string]any{
 		"api": h.d.Metrics.Snapshot(), "strategy": strategy,
@@ -374,4 +396,82 @@ func (h *Handler) metrics(w http.ResponseWriter, r *http.Request) {
 			"payment_in_progress_replies": s.PaymentInProgress.Load(),
 		},
 	})
+}
+
+// ---- waiting room (D9) ----
+
+// admitted enforces the admission pass on POST /holds. With no room configured everything passes.
+// If Redis is unreachable the request is let through (fail open): the database stays correct, only
+// the surge protection is missing, and the count of such requests is reported.
+func (h *Handler) admitted(w http.ResponseWriter, r *http.Request, buyer string) bool {
+	if h.d.Room == nil {
+		return true
+	}
+	owner, err := h.d.Room.Validate(r.Context(), r.Header.Get("X-Admission-Token"))
+	switch {
+	case err == nil && owner == buyer:
+		return true
+	case err == nil, errors.Is(err, waitingroom.ErrNoPass):
+		outcome(w, http.StatusForbidden, "not_admitted", nil) // join the queue first
+		return false
+	default:
+		h.Stats.RoomFailOpen.Add(1)
+		return true
+	}
+}
+
+func roomBody(st waitingroom.Status) map[string]any {
+	body := map[string]any{"state": st.State}
+	switch st.State {
+	case waitingroom.Queued:
+		body["position"], body["ticket"] = st.Position, st.Ticket
+	case waitingroom.Admitted:
+		body["token"], body["admit_order"] = st.Token, st.AdmitOrder
+	}
+	if st.RetryAfter > 0 {
+		body["retry_after_ms"] = st.RetryAfter.Milliseconds()
+	}
+	return body
+}
+
+func (h *Handler) roomReply(w http.ResponseWriter, st waitingroom.Status, err error) {
+	switch {
+	case err != nil: // fail open: tell the buyer to go ahead with an "open" pass, which holds accept only while Redis is down
+		h.Stats.RoomFailOpen.Add(1)
+		writeJSON(w, http.StatusOK, map[string]any{"state": waitingroom.Admitted, "token": "open", "degraded": true})
+	case st.State == waitingroom.Retry:
+		writeJSON(w, http.StatusTooManyRequests, roomBody(st))
+	case st.State == waitingroom.NotQueued:
+		writeJSON(w, http.StatusNotFound, roomBody(st))
+	default:
+		writeJSON(w, http.StatusOK, roomBody(st))
+	}
+}
+
+func (h *Handler) queueJoin(w http.ResponseWriter, r *http.Request) {
+	if h.d.Room == nil {
+		fail(w, http.StatusNotFound, "no waiting room is configured")
+		return
+	}
+	var b struct {
+		BuyerID string `json:"buyer_id"`
+	}
+	if !decode(w, r, &b) {
+		return
+	}
+	if b.BuyerID == "" {
+		fail(w, http.StatusBadRequest, "buyer_id is required")
+		return
+	}
+	st, err := h.d.Room.Join(r.Context(), b.BuyerID)
+	h.roomReply(w, st, err)
+}
+
+func (h *Handler) queuePoll(w http.ResponseWriter, r *http.Request) {
+	if h.d.Room == nil {
+		fail(w, http.StatusNotFound, "no waiting room is configured")
+		return
+	}
+	st, err := h.d.Room.Poll(r.Context(), r.PathValue("buyer"))
+	h.roomReply(w, st, err)
 }

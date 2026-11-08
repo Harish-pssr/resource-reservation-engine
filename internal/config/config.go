@@ -14,6 +14,12 @@ type Config struct {
 	HTTPAddr    string
 	PoolSize    int
 	HoldTTL     time.Duration
+
+	// Waiting room (D9). RoomRate is buyers admitted per second; 0 disables the room.
+	RoomRate         float64
+	RoomMaxQueue     int
+	RoomPassTTL      time.Duration
+	RoomHeartbeatTTL time.Duration
 }
 
 // FromEnv builds a Config from the environment.
@@ -24,6 +30,11 @@ func FromEnv() Config {
 		HTTPAddr:    get("HTTP_ADDR", ":8080"),
 		PoolSize:    getInt("DB_POOL_SIZE", 32),
 		HoldTTL:     getDuration("HOLD_TTL", 300*time.Second),
+
+		RoomRate:         getFloat("ROOM_RATE", 0),
+		RoomMaxQueue:     getInt("ROOM_MAX_QUEUE", 100000),
+		RoomPassTTL:      getDuration("ROOM_PASS_TTL", 5*time.Minute),
+		RoomHeartbeatTTL: getDuration("ROOM_HEARTBEAT_TTL", 30*time.Second),
 	}
 }
 
@@ -43,6 +54,13 @@ func getInt(key string, def int) int {
 
 func getDuration(key string, def time.Duration) time.Duration {
 	if v, err := time.ParseDuration(os.Getenv(key)); err == nil {
+		return v
+	}
+	return def
+}
+
+func getFloat(key string, def float64) float64 {
+	if v, err := strconv.ParseFloat(os.Getenv(key), 64); err == nil {
 		return v
 	}
 	return def
