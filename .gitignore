@@ -1,0 +1,6 @@
+notes/
+.claude/
+.env
+*.log
+bin/
+benchmark-scratch/
