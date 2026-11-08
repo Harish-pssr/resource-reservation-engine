@@ -65,21 +65,28 @@ type runParams struct {
 	DBPoolSize  int    `json:"db_pool_size"`
 	RetryPolicy string `json:"client_retry_policy"`
 	Scope       string `json:"scope"`
+
+	// Capacity and surge steps (D12, D9).
+	Phase    string  `json:"phase,omitempty"`
+	Label    string  `json:"label,omitempty"`
+	RoomRate float64 `json:"room_rate_buyers_per_s,omitempty"` // 0 = no waiting room
 }
 
 // record is the raw JSON written for one run.
 type record struct {
-	Params    runParams         `json:"params"`
-	Env       bench.Environment `json:"environment"`
-	StartedAt string            `json:"started_at"`
-	WallS     float64           `json:"wall_s"`
-	Client    loadgen.Summary   `json:"client_summary"`
-	Server    json.RawMessage   `json:"server_metrics"`
-	StoreLoad bench.LoadSummary `json:"store_load"`
-	Samples   []bench.Sample    `json:"store_load_samples"`
-	Checker   checker.Report    `json:"checker"`
-	Reconcile reconcile.Report  `json:"reconcile"`
-	Verdict   string            `json:"verdict"`
+	Params    runParams           `json:"params"`
+	Env       bench.Environment   `json:"environment"`
+	Stores    bench.StoreSettings `json:"store_settings"`
+	StartedAt string              `json:"started_at"`
+	WallS     float64             `json:"wall_s"`
+	Client    loadgen.Summary     `json:"client_summary"`
+	Server    json.RawMessage     `json:"server_metrics"`
+	StoreLoad bench.LoadSummary   `json:"store_load"`
+	Samples   []bench.Sample      `json:"store_load_samples"`
+	Checker   checker.Report      `json:"checker"`
+	Reconcile reconcile.Report    `json:"reconcile"`
+	Sustain   bench.Verdict       `json:"sustain"` // the D12 rules applied to this run
+	Verdict   string              `json:"verdict"`
 }
 
 const scopeNote = "simulated payment and simulated demand; API, database and load generator share one machine unless the environment says otherwise"
@@ -105,7 +112,7 @@ func freePort() (int, error) {
 
 // reset puts the database and the gate in a known empty state before a run.
 func (h *harness) reset(ctx context.Context) error {
-	admin, err := db.Open(ctx, h.dbURL, "")
+	admin, err := db.Open(ctx, h.dbURL, "", db.WithMaxConns(2))
 	if err != nil {
 		return err
 	}
@@ -130,7 +137,7 @@ func (h *harness) startAPI(ctx context.Context, p runParams, pc payment.Config) 
 	cmd := exec.CommandContext(ctx, h.apiBin)
 	cmd.Env = append(os.Environ(),
 		"STRATEGY="+p.APIStrategy, "SCHEMA="+p.Schema, "PAYMENT_PROFILE="+p.PaymentProfile,
-		"HOLD_TTL="+p.HoldTTL, "HTTP_ADDR="+addr, "DATABASE_URL="+h.dbURL, "REDIS_ADDR="+h.redis,
+		"HOLD_TTL="+p.HoldTTL, fmt.Sprintf("ROOM_RATE=%g", p.RoomRate), "HTTP_ADDR="+addr, "DATABASE_URL="+h.dbURL, "REDIS_ADDR="+h.redis,
 		fmt.Sprintf("DB_POOL_SIZE=%d", p.DBPoolSize))
 	if h.keepLogs {
 		cmd.Stdout, cmd.Stderr = os.Stdout, os.Stderr
@@ -171,12 +178,15 @@ func (h *harness) oneRun(ctx context.Context, p runParams, pc payment.Config) (*
 	}
 	defer func() { cmd.Process.Kill(); cmd.Wait() }()
 
-	admin, err := db.Open(ctx, h.dbURL, "")
+	admin, err := db.Open(ctx, h.dbURL, "", db.WithMaxConns(2))
 	if err != nil {
 		return nil, err
 	}
 	defer admin.Close()
 	sampler := bench.NewSampler(admin, time.Second)
+	rdb := redis.NewClient(&redis.Options{Addr: h.redis})
+	defer rdb.Close()
+	stores := bench.CaptureStores(ctx, admin, rdb)
 
 	eventID, itemIDs, err := loadgen.CreateEvent(ctx, base, p.Items)
 	if err != nil {
@@ -187,7 +197,8 @@ func (h *harness) oneRun(ctx context.Context, p runParams, pc payment.Config) (*
 	sampler.Start(ctx)
 	res, err := loadgen.Run(ctx, loadgen.Config{
 		BaseURL: base, ItemIDs: itemIDs, Picker: workload.NewPicker(len(itemIDs), p.Skew, p.Seed),
-		Rate: float64(p.Buyers) / p.ArrivalWindowS, Duration: time.Duration(p.ArrivalWindowS * float64(time.Second)), RunID: runID})
+		Rate: float64(p.Buyers) / p.ArrivalWindowS, Duration: time.Duration(p.ArrivalWindowS * float64(time.Second)), RunID: runID,
+		Room: p.RoomRate > 0})
 	samples := sampler.Stop()
 	if err != nil {
 		return nil, err
@@ -198,7 +209,7 @@ func (h *harness) oneRun(ctx context.Context, p runParams, pc payment.Config) (*
 	}
 
 	// Judge the final state from the database alone.
-	pool, err := db.Open(ctx, h.dbURL, p.Schema)
+	pool, err := db.Open(ctx, h.dbURL, p.Schema, db.WithMaxConns(4))
 	if err != nil {
 		return nil, err
 	}
@@ -211,8 +222,8 @@ func (h *harness) oneRun(ctx context.Context, p runParams, pc payment.Config) (*
 	if err != nil {
 		return nil, err
 	}
-	r := &record{Params: p, Env: h.env, StartedAt: started.UTC().Format(time.RFC3339), WallS: time.Since(started).Seconds(),
-		Client: res.Summary, Server: server, StoreLoad: bench.Summarize(samples), Samples: samples, Checker: chk, Reconcile: rec}
+	r := &record{Params: p, Env: h.env, Stores: stores, StartedAt: started.UTC().Format(time.RFC3339), WallS: time.Since(started).Seconds(),
+		Client: res.Summary, Server: server, StoreLoad: bench.Summarize(samples), Samples: samples, Checker: chk, Reconcile: rec, Sustain: bench.Judge(res.Summary)}
 	switch {
 	case !res.Summary.GeneratorOK:
 		r.Verdict = "generator did not keep up: do not use this run for latency"
@@ -229,7 +240,11 @@ func (h *harness) write(r *record, buyers []loadgen.BuyerResult) error {
 	if err := os.MkdirAll(h.out, 0o755); err != nil {
 		return err
 	}
-	base := filepath.Join(h.out, fmt.Sprintf("%s-%s-run%d", r.Params.Experiment, r.Params.Strategy, r.Params.Run))
+	name := fmt.Sprintf("%s-%s-run%d", r.Params.Experiment, r.Params.Strategy, r.Params.Run)
+	if r.Params.Label != "" {
+		name = fmt.Sprintf("%s-%s", r.Params.Experiment, r.Params.Label)
+	}
+	base := filepath.Join(h.out, name)
 	b, _ := json.MarshalIndent(r, "", "  ")
 	if err := os.WriteFile(base+".json", b, 0o644); err != nil {
 		return err

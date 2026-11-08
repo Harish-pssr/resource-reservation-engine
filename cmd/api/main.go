@@ -54,7 +54,7 @@ func run() error {
 	defer stop()
 
 	schema := envOr("SCHEMA", db.SchemaProtected)
-	pool, err := db.Setup(ctx, cfg.DatabaseURL, schema, schema == db.SchemaProtected)
+	pool, err := db.Setup(ctx, cfg.DatabaseURL, schema, schema == db.SchemaProtected, db.WithMaxConns(int32(cfg.PoolSize)))
 	if err != nil {
 		return err
 	}

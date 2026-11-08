@@ -6,6 +6,7 @@ import (
 	"testing"
 	"testing/fstest"
 
+	"resourcereservation/internal/config"
 	"resourcereservation/internal/db"
 	"resourcereservation/internal/testdb"
 )
@@ -38,5 +39,17 @@ func TestMigrateFailureLeavesNothingHalfApplied(t *testing.T) {
 	pool.QueryRow(context.Background(), `SELECT to_regclass('half') IS NOT NULL`).Scan(&exists)
 	if exists {
 		t.Fatal("table from a failed migration must not exist")
+	}
+}
+
+// The pool size that is configured must be the pool size that is used: a benchmark record states it.
+func TestPoolSizeOptionIsApplied(t *testing.T) {
+	pool, err := db.Open(context.Background(), config.FromEnv().DatabaseURL, "", db.WithMaxConns(3))
+	if err != nil {
+		t.Skipf("postgres not reachable: %v", err)
+	}
+	defer pool.Close()
+	if got := pool.Config().MaxConns; got != 3 {
+		t.Fatalf("MaxConns %d, want 3", got)
 	}
 }

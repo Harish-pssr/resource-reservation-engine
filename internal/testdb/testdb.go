@@ -16,11 +16,14 @@ import (
 	"resourcereservation/internal/db"
 )
 
+// testConns bounds every test pool, so many test packages running in parallel cannot exhaust the server.
+const testConns = 10
+
 func create(t *testing.T) (dbURL string) {
 	t.Helper()
 	ctx := context.Background()
 	base := config.FromEnv().DatabaseURL
-	admin, err := db.Open(ctx, base, "")
+	admin, err := db.Open(ctx, base, "", db.WithMaxConns(2))
 	if err != nil {
 		t.Skipf("postgres not reachable (run scripts/up first): %v", err)
 	}
@@ -43,7 +46,7 @@ func create(t *testing.T) (dbURL string) {
 // NewEmpty returns a pool on a fresh, empty database.
 func NewEmpty(t *testing.T) *pgxpool.Pool {
 	t.Helper()
-	pool, err := db.Open(context.Background(), create(t), "")
+	pool, err := db.Open(context.Background(), create(t), "", db.WithMaxConns(testConns))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -58,7 +61,7 @@ func New(t *testing.T, protected bool) *pgxpool.Pool {
 	if protected {
 		schema = db.SchemaProtected
 	}
-	pool, err := db.Setup(context.Background(), create(t), schema, protected)
+	pool, err := db.Setup(context.Background(), create(t), schema, protected, db.WithMaxConns(testConns))
 	if err != nil {
 		t.Fatal(err)
 	}

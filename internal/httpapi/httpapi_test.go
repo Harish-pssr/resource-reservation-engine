@@ -213,6 +213,13 @@ func TestMetricsExplainWhatHappened(t *testing.T) {
 	if counters["requests{POST /holds,201}"] != float64(1) || counters["requests{POST /holds,409}"] != float64(1) {
 		t.Fatalf("request counters: %v", counters)
 	}
+	strat := m["strategy"].(map[string]any)
+	if strat["db_pool_max_conns"] != float64(10) {
+		t.Fatalf("the pool size in use must be reported (the test pool is 10): %v", strat["db_pool_max_conns"])
+	}
+	if _, ok := strat["db_pool_acquires_that_waited"]; !ok {
+		t.Fatalf("pool waits must be reported: %v", strat)
+	}
 	if _, ok := m["strategy"].(map[string]any)["lock_busy"]; !ok {
 		t.Fatalf("the locking strategy's counters must be exposed: %v", m["strategy"])
 	}

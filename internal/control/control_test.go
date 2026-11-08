@@ -34,7 +34,10 @@ const (
 	maxRound = 10 // contention is probabilistic: retry with a fresh database until the race shows
 )
 
-type tally struct{ held, confirmed, other int }
+type tally struct {
+	held, confirmed, other int
+	confirmErr             string // the first confirm that did not end in Confirmed, for diagnosis
+}
 
 // race starts all buyers at once; each holds one random hot item and, if it won the hold, confirms.
 func race(pool *pgxpool.Pool, svc reservation.Service, items []int64) tally {
@@ -65,6 +68,8 @@ func race(pool *pgxpool.Pool, svc reservation.Service, items []int64) tally {
 			mu.Lock()
 			if err == nil && c.Outcome == reservation.Confirmed {
 				t.confirmed++
+			} else if t.confirmErr == "" {
+				t.confirmErr = fmt.Sprintf("outcome %q err %v", c.Outcome, err)
 			}
 		}(i)
 	}
@@ -149,6 +154,9 @@ func TestProtectedStrategiesAreSafeOnBothSchemas(t *testing.T) {
 					tl := race(pool, build(pool), items)
 					r := report(t, pool)
 					t.Logf("round %d: held=%d confirmed=%d -> %v", round, tl.held, tl.confirmed, r)
+					if tl.confirmErr != "" {
+						t.Logf("  first confirm that did not end in Confirmed: %s", tl.confirmErr)
+					}
 					if !r.OK() {
 						t.Fatalf("%s must never double sell: %v", name, r)
 					}

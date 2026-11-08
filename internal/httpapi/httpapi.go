@@ -186,8 +186,8 @@ func (h *Handler) createEvent(w http.ResponseWriter, r *http.Request) {
 	if !decode(w, r, &b) {
 		return
 	}
-	if h.d.Pool == nil || b.Items <= 0 || b.Items > 100000 {
-		fail(w, http.StatusBadRequest, "items must be between 1 and 100000")
+	if h.d.Pool == nil || b.Items <= 0 || b.Items > 500000 {
+		fail(w, http.StatusBadRequest, "items must be between 1 and 500000")
 		return
 	}
 	id, items, err := db.CreateEvent(r.Context(), h.d.Pool, b.Name, b.Items)
@@ -375,6 +375,15 @@ func (h *Handler) metrics(w http.ResponseWriter, r *http.Request) {
 	strategy := map[string]int64{}
 	if cp, ok := h.d.Service.(reservation.CounterProvider); ok {
 		strategy = cp.Counters()
+	}
+	if h.d.Pool != nil { // the connection pool: how big it is and how often a request had to wait for a connection
+		st := h.d.Pool.Stat()
+		strategy["db_pool_max_conns"] = int64(st.MaxConns())
+		strategy["db_pool_acquired_conns"] = int64(st.AcquiredConns())
+		strategy["db_pool_idle_conns"] = int64(st.IdleConns())
+		strategy["db_pool_acquires_total"] = st.AcquireCount()
+		strategy["db_pool_acquires_that_waited"] = st.EmptyAcquireCount()
+		strategy["db_pool_acquire_wait_ms_total"] = st.AcquireDuration().Milliseconds()
 	}
 	if h.d.Room != nil {
 		for k, v := range h.d.Room.Counters() {

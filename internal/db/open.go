@@ -18,14 +18,24 @@ const (
 
 var schemaName = regexp.MustCompile(`^[a-z_][a-z0-9_]*$`)
 
+// Option adjusts the pool a function opens.
+type Option func(*pgxpool.Config)
+
+// WithMaxConns caps the pool at n connections. Without it pgx uses max(4, number of CPUs), which is
+// not what a benchmark record would say: always pass the configured size.
+func WithMaxConns(n int32) Option { return func(c *pgxpool.Config) { c.MaxConns = n } }
+
 // Open returns a pool whose connections use the given schema ("" = server default).
-func Open(ctx context.Context, url, schema string) (*pgxpool.Pool, error) {
+func Open(ctx context.Context, url, schema string, opts ...Option) (*pgxpool.Pool, error) {
 	cfg, err := pgxpool.ParseConfig(url)
 	if err != nil {
 		return nil, fmt.Errorf("parse database url: %w", err)
 	}
 	if schema != "" {
 		cfg.ConnConfig.RuntimeParams["search_path"] = schema
+	}
+	for _, o := range opts {
+		o(cfg)
 	}
 	pool, err := pgxpool.NewWithConfig(ctx, cfg)
 	if err != nil {
@@ -40,11 +50,11 @@ func Open(ctx context.Context, url, schema string) (*pgxpool.Pool, error) {
 
 // Setup creates the schema if needed, applies the migrations for the variant, and returns a
 // pool using it. protected=false builds the unprotected negative-control variant.
-func Setup(ctx context.Context, url, schema string, protected bool) (*pgxpool.Pool, error) {
+func Setup(ctx context.Context, url, schema string, protected bool, opts ...Option) (*pgxpool.Pool, error) {
 	if !schemaName.MatchString(schema) {
 		return nil, fmt.Errorf("invalid schema name %q", schema)
 	}
-	admin, err := Open(ctx, url, "")
+	admin, err := Open(ctx, url, "", WithMaxConns(1))
 	if err != nil {
 		return nil, err
 	}
@@ -53,7 +63,7 @@ func Setup(ctx context.Context, url, schema string, protected bool) (*pgxpool.Po
 	if err != nil {
 		return nil, fmt.Errorf("create schema: %w", err)
 	}
-	pool, err := Open(ctx, url, schema)
+	pool, err := Open(ctx, url, schema, opts...)
 	if err != nil {
 		return nil, err
 	}

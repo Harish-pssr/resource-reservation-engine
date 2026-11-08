@@ -3,6 +3,8 @@
 services:
   postgres:
     image: postgres:16
+    # Many test packages run in parallel, each with its own pool: the default of 100 connections is too few.
+    command: ["postgres", "-c", "max_connections=300"]
     environment:
       POSTGRES_USER: reservation
       POSTGRES_PASSWORD: reservation

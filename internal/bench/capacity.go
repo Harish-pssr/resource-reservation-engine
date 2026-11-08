@@ -26,6 +26,14 @@ func HoldP99Ms(s loadgen.Summary) float64 {
 	return s.HoldP99Ms
 }
 
+// HoldP50Ms is the median from the same latency view as HoldP99Ms, so the two are never mixed.
+func HoldP50Ms(s loadgen.Summary) float64 {
+	if s.RoomUsed {
+		return s.StoreHoldP50Ms
+	}
+	return s.HoldP50Ms
+}
+
 // Judge applies the D12 rules, in order; the first that fails is reported:
 //  1. the generator kept up (it must never be the bottleneck);
 //  2. no unknown outcomes (a transport error, an unexpected status);
