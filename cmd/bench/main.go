@@ -24,6 +24,8 @@ func main() {
 		err = e2(os.Args[2:])
 	case "e3":
 		err = e3(os.Args[2:])
+	case "e4":
+		err = e4(os.Args[2:])
 	default:
 		usage()
 	}
@@ -34,6 +36,6 @@ func main() {
 }
 
 func usage() {
-	fmt.Fprintln(os.Stderr, "usage: bench e1|e2|e3 [flags]\n  e1  oversell test, every strategy, repeated runs\n  e2  capacity and latency per strategy (ramp, confirmation, 70% latency, baseline first and last)\n  e3  surge protection: with and without the waiting room at several oversubscription factors")
+	fmt.Fprintln(os.Stderr, "usage: bench e1|e2|e3|e4 [flags]\n  e1  oversell test, every strategy, repeated runs\n  e2  capacity and latency per strategy (ramp, confirmation, 70% latency, baseline first and last)\n  e3  surge protection: with and without the waiting room at several oversubscription factors\n  e4  failures under load: real API kills, Redis and Postgres restarts, an expiry race; judged by the checker and the reconciler")
 	os.Exit(2)
 }

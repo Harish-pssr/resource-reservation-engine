@@ -4,7 +4,7 @@
 //
 //	STRATEGY         locking (default), optimistic, fastpath (Redis gate + locking) or naive
 //	SCHEMA           protected (default) or unprotected; unprotected has no unique-index backstop
-//	PAYMENT_PROFILE  fast (default) or realistic; PAYMENT_FAIL_PCT and PAYMENT_TIMEOUT_PCT override its failure shares
+//	PAYMENT_PROFILE  fast (default) or realistic; PAYMENT_FAIL_PCT, PAYMENT_TIMEOUT_PCT, PAYMENT_DELAY_MIN_MS and PAYMENT_DELAY_MAX_MS override it
 //	HOLD_TTL         hold duration, e.g. 30s (default 300s)
 //	FAULTS_ENABLED   "true" turns on the fault-injection hooks (D13); ADMIN_TOKEN guards their controls
 //	GATE_PREFIX, ROOM_PREFIX  Redis key prefixes (default rre: and rroom:), so parallel servers do not share keys
@@ -104,6 +104,13 @@ func run() error {
 	}
 	if v, err := strconv.ParseFloat(os.Getenv("PAYMENT_TIMEOUT_PCT"), 64); err == nil {
 		payCfg.TimeoutPct = v
+	}
+	// The delay range can be overridden too: the expiry-race experiment needs payments that outlive a short hold.
+	if v, err := strconv.Atoi(os.Getenv("PAYMENT_DELAY_MIN_MS")); err == nil {
+		payCfg.DelayMin = time.Duration(v) * time.Millisecond
+	}
+	if v, err := strconv.Atoi(os.Getenv("PAYMENT_DELAY_MAX_MS")); err == nil {
+		payCfg.DelayMax = time.Duration(v) * time.Millisecond
 	}
 
 	var room *waitingroom.Room
