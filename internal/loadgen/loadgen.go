@@ -274,3 +274,30 @@ func Run(ctx context.Context, cfg Config) (Result, error) {
 	wg.Wait()
 	return Result{Summary: Summarize(cfg, results, skipped, peak.Load(), cfg.Duration, time.Since(start)), Buyers: results}, nil
 }
+
+// CreateEvent seeds an event with n items through the API and returns its id and item ids in order.
+func CreateEvent(ctx context.Context, baseURL string, n int) (int64, []int64, error) {
+	c := &client{base: baseURL, http: &http.Client{}}
+	b, _ := json.Marshal(map[string]any{"name": "loadgen", "items": n})
+	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute) // seeding a large event takes a moment
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.base+"/events", bytes.NewReader(b))
+	if err != nil {
+		return 0, nil, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return 0, nil, err
+	}
+	defer resp.Body.Close()
+	raw, _ := io.ReadAll(resp.Body)
+	var ev struct {
+		EventID int64   `json:"event_id"`
+		ItemIDs []int64 `json:"item_ids"`
+	}
+	if resp.StatusCode != http.StatusCreated || json.Unmarshal(raw, &ev) != nil {
+		return 0, nil, fmt.Errorf("create event: status %d: %s", resp.StatusCode, raw)
+	}
+	return ev.EventID, ev.ItemIDs, nil
+}

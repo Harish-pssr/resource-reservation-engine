@@ -11,12 +11,9 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
-	"io"
-	"net/http"
 	"os"
 	"os/signal"
 	"path/filepath"
-	"strings"
 	"time"
 
 	"resourcereservation/internal/loadgen"
@@ -44,19 +41,14 @@ func run() error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
 
-	resp, err := http.Post(*url+"/events", "application/json", strings.NewReader(fmt.Sprintf(`{"name":"loadgen","items":%d}`, *items)))
+	eventID, itemIDs, err := loadgen.CreateEvent(ctx, *url, *items)
 	if err != nil {
-		return fmt.Errorf("create event: %w", err)
+		return err
 	}
-	var ev struct {
-		EventID int64   `json:"event_id"`
-		ItemIDs []int64 `json:"item_ids"`
-	}
-	body, _ := io.ReadAll(resp.Body)
-	resp.Body.Close()
-	if resp.StatusCode != http.StatusCreated || json.Unmarshal(body, &ev) != nil {
-		return fmt.Errorf("create event: status %d: %s", resp.StatusCode, body)
-	}
+	ev := struct {
+		EventID int64
+		ItemIDs []int64
+	}{eventID, itemIDs}
 
 	runID := *name
 	if runID == "" {
