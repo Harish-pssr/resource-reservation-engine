@@ -120,10 +120,19 @@ func run() error {
 		go room.Run(ctx) // any number of API instances may run this: the rate budget lives in Redis
 	}
 
+	// What the console shows about this server.
+	info := map[string]string{"strategy": strategy, "schema": schema, "payment_profile": envOr("PAYMENT_PROFILE", "fast"),
+		"hold_ttl": cfg.HoldTTL.String(), "room_rate_per_s": strconv.FormatFloat(cfg.RoomRate, 'f', -1, 64)}
+	var redisPing func(context.Context) error
+	if strategy == "fastpath" || room != nil {
+		pc := redis.NewClient(&redis.Options{Addr: cfg.RedisAddr})
+		redisPing = func(ctx context.Context) error { return pc.Ping(ctx).Err() }
+	}
+
 	srv := &http.Server{
 		Addr: cfg.HTTPAddr,
 		Handler: httpapi.New(httpapi.Deps{Service: svc, Payment: payment.New(payCfg), Pool: pool, HoldTTL: cfg.HoldTTL, Room: room,
-			Faults: reg, AdminToken: cfg.AdminToken}),
+			Faults: reg, AdminToken: cfg.AdminToken, Info: info, RedisPing: redisPing}),
 	}
 	go func() {
 		<-ctx.Done()

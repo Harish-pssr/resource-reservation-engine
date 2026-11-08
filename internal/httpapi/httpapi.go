@@ -42,6 +42,9 @@ type Deps struct {
 	// Faults is the fault registry (D13); nil disables injection. AdminToken guards its controls.
 	Faults     *faults.Registry
 	AdminToken string
+	// Info is shown by the console (strategy, schema, profile...); RedisPing, if set, feeds /healthz.
+	Info      map[string]string
+	RedisPing func(context.Context) error
 	// Metrics receives request counters and latency histograms; New creates one if nil.
 	Metrics *metrics.Registry
 }
@@ -92,6 +95,7 @@ func New(d Deps) *Handler {
 	h.mux.HandleFunc("GET /queue/{buyer}", h.queuePoll)
 	h.mux.HandleFunc("GET /stats", h.stats)
 	h.registerAdmin()
+	h.registerUI()
 	h.mux.HandleFunc("GET /metrics", h.metrics)
 	return h
 }
@@ -108,6 +112,9 @@ func (w *statusWriter) WriteHeader(code int) { w.status = code; w.ResponseWriter
 func route(r *http.Request) string {
 	if strings.HasPrefix(r.URL.Path, "/events/") && strings.HasSuffix(r.URL.Path, "/availability") {
 		return r.Method + " /events/:id/availability"
+	}
+	if strings.HasPrefix(r.URL.Path, "/events/") && (strings.HasSuffix(r.URL.Path, "/items") || strings.HasSuffix(r.URL.Path, "/bookings")) {
+		return r.Method + " /events/:id/" + r.URL.Path[strings.LastIndex(r.URL.Path, "/")+1:]
 	}
 	if strings.HasPrefix(r.URL.Path, "/admin/faults/") {
 		return r.Method + " /admin/faults/:point"
