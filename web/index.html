@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Resource Reservation Engine</title>
+<meta name="description" content="Live console for a reservation engine: expiring holds, a hard guarantee in the database, and behaviour under contention and failure.">
+<meta name="theme-color" content="#2b3044">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%23e8405b'/%3E%3Crect x='14' y='20' width='14' height='14' rx='3' fill='white'/%3E%3Crect x='36' y='20' width='14' height='14' rx='3' fill='white' opacity='.55'/%3E%3Crect x='14' y='40' width='14' height='14' rx='3' fill='white' opacity='.55'/%3E%3Crect x='36' y='40' width='14' height='14' rx='3' fill='white'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="/app.css">
+<script>try { var t = localStorage.getItem("theme"); if (t === "light" || t === "dark") document.documentElement.dataset.theme = t; } catch (e) { /* storage unavailable: follow the system */ }</script>
+</head>
+<body>
+<div class="app">
+  <aside class="sidebar" aria-label="Main navigation">
+    <div class="brand">
+      <div class="brand-mark" aria-hidden="true"><i></i><i></i><i></i><i></i></div>
+      <div>
+        <div class="brand-name">Reservation Engine</div>
+        <div class="brand-sub">Limited items, many buyers</div>
+      </div>
+    </div>
+
+    <nav id="nav" class="nav">
+      <a href="#/start" data-route="start">Start</a>
+      <div class="nav-group">Observe</div>
+      <a href="#/overview" data-route="overview">Overview</a>
+      <a href="#/inventory" data-route="inventory">Live seat map</a>
+      <a href="#/bookings" data-route="bookings">Bookings</a>
+      <a href="#/room" data-route="room">Waiting room</a>
+      <a href="#/health" data-route="health">Health</a>
+      <div class="nav-group">Try it</div>
+      <a href="#/book" data-route="book">Book seats</a>
+      <a href="#/surge" data-route="surge">Surge</a>
+      <a href="#/failures" data-route="failures">Failures</a>
+      <a href="#/checker" data-route="checker">Checker</a>
+    </nav>
+
+    <div class="sidebar-foot">
+      <div id="api-pill" class="pill pill-unknown"><span class="dot"></span><span id="api-pill-text">Checking API…</span></div>
+      <div id="redis-pill" class="pill pill-unknown" hidden><span class="dot"></span><span id="redis-pill-text"></span></div>
+      <div class="theme-row">
+        <button type="button" class="theme-btn" id="theme" aria-label="Colour theme"></button>
+        <span class="muted small" id="theme-label"></span>
+      </div>
+    </div>
+  </aside>
+
+  <main class="main">
+    <header class="topbar">
+      <div>
+        <h1 id="page-title">Overview</h1>
+        <p id="page-desc" class="page-desc"></p>
+      </div>
+      <div class="topbar-actions">
+        <input type="password" id="admin-token" class="token" placeholder="Admin token" autocomplete="off" aria-label="Admin token" title="Needed for the Failures and Checker sections. It is only kept for this browser tab.">
+        <span id="updated" class="muted small" role="status"></span>
+        <label class="switch" title="Refreshes the data on this page every second or two. Turn it off to freeze the screen, for example to read it or take a screenshot.">
+          <input type="checkbox" id="live" checked>
+          <span class="switch-track"></span>
+          <span class="switch-label">Auto-refresh</span>
+        </label>
+      </div>
+    </header>
+    <div id="banner" class="banner" hidden></div>
+    <div id="views"></div>
+  </main>
+</div>
+
+<div id="drawer-backdrop" class="backdrop" hidden></div>
+<aside id="drawer" class="drawer" role="dialog" aria-modal="true" aria-labelledby="drawer-title" hidden>
+  <div class="drawer-head">
+    <div>
+      <div class="muted small" id="drawer-kicker">Details</div>
+      <h2 id="drawer-title" class="mono">—</h2>
+    </div>
+    <button class="btn btn-ghost" id="drawer-close" aria-label="Close details">Close</button>
+  </div>
+  <div id="drawer-body" class="drawer-body"></div>
+</aside>
+
+<div id="toasts" class="toasts" aria-live="polite"></div>
+<script src="/app.js"></script>
+</body>
+</html>

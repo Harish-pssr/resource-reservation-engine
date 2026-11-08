@@ -3,6 +3,8 @@ package httpapi_test
 import (
 	"context"
 	"net/http"
+	"os/exec"
+	"strings"
 	"testing"
 	"time"
 )
@@ -124,5 +126,46 @@ func TestCheckEndpointNeedsTheTokenButNotFaultsEnabled(t *testing.T) {
 	none := newFaultFixture(t, false, "", time.Millisecond)
 	if code, _ := none.get("/admin/check", adminToken); code != http.StatusForbidden {
 		t.Fatalf("with no token configured the endpoint must refuse everyone: %d", code)
+	}
+}
+
+func TestConsoleIsServedAndTheAPIStillWorks(t *testing.T) {
+	f := newFaultFixture(t, false, adminToken, time.Millisecond)
+	get := func(path string) (int, string, string) {
+		resp, err := http.Get(f.srv.URL + path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		b := make([]byte, 1<<20)
+		n, _ := resp.Body.Read(b)
+		return resp.StatusCode, resp.Header.Get("Content-Type"), string(b[:n])
+	}
+	if code, ct, body := get("/"); code != http.StatusOK || !strings.Contains(ct, "text/html") || !strings.Contains(body, "Resource Reservation Engine") {
+		t.Fatalf("index: %d %s", code, ct)
+	}
+	for _, p := range []string{"/app.js", "/app.css"} {
+		if code, _, body := get(p); code != http.StatusOK || len(body) < 1000 {
+			t.Fatalf("%s: %d, %d bytes", p, code, len(body))
+		}
+	}
+	if code, _, _ := get("/no-such-page"); code != http.StatusNotFound {
+		t.Fatalf("an unknown path must be 404, got %d", code)
+	}
+	// The API routes are not shadowed by the file server.
+	if code, _, body := get("/events"); code != http.StatusOK || !strings.Contains(body, `"events"`) {
+		t.Fatalf("/events: %d %s", code, body)
+	}
+}
+
+// The console script must at least parse: a syntax error would leave every page blank.
+func TestConsoleScriptParses(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node is not installed")
+	}
+	out, err := exec.Command(node, "--check", "../../web/app.js").CombinedOutput()
+	if err != nil {
+		t.Fatalf("app.js does not parse:\n%s", out)
 	}
 }

@@ -28,6 +28,7 @@ import (
 	"resourcereservation/internal/payment"
 	"resourcereservation/internal/reservation"
 	"resourcereservation/internal/waitingroom"
+	"resourcereservation/web"
 )
 
 // Deps are the pieces the handler needs.
@@ -96,6 +97,8 @@ func New(d Deps) *Handler {
 	h.mux.HandleFunc("GET /stats", h.stats)
 	h.registerAdmin()
 	h.registerUI()
+	// The console. Any path no API route claims is looked up in the embedded web folder.
+	h.mux.Handle("GET /", noCache(http.FileServerFS(web.FS)))
 	h.mux.HandleFunc("GET /metrics", h.metrics)
 	return h
 }
@@ -570,4 +573,12 @@ func (h *Handler) trackPayment(ref reservation.HoldRef) func() {
 		}
 		h.payMu.Unlock()
 	}
+}
+
+// noCache makes the browser re-check the console files on every load, so a change is never hidden by a stale copy.
+func noCache(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Cache-Control", "no-cache")
+		next.ServeHTTP(w, r)
+	})
 }
