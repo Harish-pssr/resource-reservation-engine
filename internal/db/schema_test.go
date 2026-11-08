@@ -6,7 +6,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"reservationengine/internal/testdb"
+	"resourcereservation/internal/testdb"
 )
 
 // seedItem creates one event with one item and returns the item id.

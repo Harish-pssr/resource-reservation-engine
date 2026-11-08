@@ -19,7 +19,7 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"reservationengine/internal/reservation"
+	"resourcereservation/internal/reservation"
 )
 
 // Store implements reservation.Service with row locks.

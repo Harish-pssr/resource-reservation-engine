@@ -11,8 +11,8 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"reservationengine/internal/reservation"
-	"reservationengine/internal/testdb"
+	"resourcereservation/internal/reservation"
+	"resourcereservation/internal/testdb"
 )
 
 // Factory builds a strategy on a pool using the protected schema.

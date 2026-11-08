@@ -5,9 +5,9 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"reservationengine/internal/reservation"
-	"reservationengine/internal/reservation/locking"
-	"reservationengine/internal/reservation/reservationtest"
+	"resourcereservation/internal/reservation"
+	"resourcereservation/internal/reservation/locking"
+	"resourcereservation/internal/reservation/reservationtest"
 )
 
 func TestBehaviour(t *testing.T) {

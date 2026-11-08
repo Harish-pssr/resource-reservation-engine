@@ -6,8 +6,8 @@ import (
 	"testing"
 	"testing/fstest"
 
-	"reservationengine/internal/db"
-	"reservationengine/internal/testdb"
+	"resourcereservation/internal/db"
+	"resourcereservation/internal/testdb"
 )
 
 func TestMigrateAppliesOnceInOrder(t *testing.T) {

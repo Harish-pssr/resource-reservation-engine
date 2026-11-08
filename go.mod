@@ -1,4 +1,4 @@
-module reservationengine
+module resourcereservation
 
 go 1.27.0
 

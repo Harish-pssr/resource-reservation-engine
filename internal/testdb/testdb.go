@@ -10,8 +10,8 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"reservationengine/internal/config"
-	"reservationengine/internal/db"
+	"resourcereservation/internal/config"
+	"resourcereservation/internal/db"
 )
 
 func create(t *testing.T) (dbURL string) {
