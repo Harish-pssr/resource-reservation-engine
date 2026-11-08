@@ -2,7 +2,7 @@
 //
 // Settings come from the environment (see internal/config):
 //
-//	STRATEGY         locking (default) or naive
+//	STRATEGY         locking (default), optimistic or naive
 //	SCHEMA           protected (default) or unprotected; unprotected has no unique-index backstop
 //	PAYMENT_PROFILE  fast (default) or realistic
 //	HOLD_TTL         hold duration, e.g. 30s (default 300s)
@@ -25,6 +25,7 @@ import (
 	"resourcereservation/internal/reservation"
 	"resourcereservation/internal/reservation/locking"
 	"resourcereservation/internal/reservation/naive"
+	"resourcereservation/internal/reservation/optimistic"
 )
 
 func main() {
@@ -58,10 +59,12 @@ func run() error {
 	switch strategy {
 	case "locking":
 		svc = locking.New(pool)
+	case "optimistic":
+		svc = optimistic.New(pool)
 	case "naive":
 		svc = naive.New(pool)
 	default:
-		return errors.New("unknown STRATEGY " + strategy + " (want locking or naive)")
+		return errors.New("unknown STRATEGY " + strategy + " (want locking, optimistic or naive)")
 	}
 	payCfg, err := payment.Profile(envOr("PAYMENT_PROFILE", "fast"))
 	if err != nil {

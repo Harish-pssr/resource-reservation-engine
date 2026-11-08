@@ -4,8 +4,8 @@
 //
 //	naive   + unprotected  -> must show double sales   (the checker can detect the problem)
 //	naive   + protected    -> must show none, and the unique index must have refused some
-//	locking + unprotected  -> must show none           (the strategy itself is safe)
-//	locking + protected    -> must show none
+//	locking/optimistic + unprotected -> must show none (the strategy itself is safe)
+//	locking/optimistic + protected   -> must show none
 //
 // A zero is only meaningful because the first cell is not zero.
 package control_test
@@ -24,6 +24,7 @@ import (
 	"resourcereservation/internal/reservation"
 	"resourcereservation/internal/reservation/locking"
 	"resourcereservation/internal/reservation/naive"
+	"resourcereservation/internal/reservation/optimistic"
 	"resourcereservation/internal/testdb"
 )
 
@@ -135,21 +136,27 @@ func TestNaiveOnProtectedSchemaIsStoppedByTheIndex(t *testing.T) {
 	t.Fatalf("the index never had to refuse a booking in %d rounds: the control is not exercising the backstop", maxRound)
 }
 
-func TestLockingIsSafeOnBothSchemas(t *testing.T) {
-	for _, protected := range []bool{false, true} {
-		t.Run(fmt.Sprintf("protected=%v", protected), func(t *testing.T) {
-			for round := 1; round <= 3; round++ {
-				pool, items := newRun(t, protected)
-				tl := race(pool, locking.New(pool), items)
-				r := report(t, pool)
-				t.Logf("round %d: held=%d confirmed=%d -> %v", round, tl.held, tl.confirmed, r)
-				if !r.OK() {
-					t.Fatalf("locking must never double sell: %v", r)
+func TestProtectedStrategiesAreSafeOnBothSchemas(t *testing.T) {
+	strategies := map[string]func(*pgxpool.Pool) reservation.Service{
+		"locking":    func(p *pgxpool.Pool) reservation.Service { return locking.New(p) },
+		"optimistic": func(p *pgxpool.Pool) reservation.Service { return optimistic.New(p) },
+	}
+	for name, build := range strategies {
+		for _, protected := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/protected=%v", name, protected), func(t *testing.T) {
+				for round := 1; round <= 3; round++ {
+					pool, items := newRun(t, protected)
+					tl := race(pool, build(pool), items)
+					r := report(t, pool)
+					t.Logf("round %d: held=%d confirmed=%d -> %v", round, tl.held, tl.confirmed, r)
+					if !r.OK() {
+						t.Fatalf("%s must never double sell: %v", name, r)
+					}
+					if tl.held != tl.confirmed || tl.confirmed > hotItems {
+						t.Fatalf("every winner confirms and winners cannot exceed items: %+v", tl)
+					}
 				}
-				if tl.held != tl.confirmed || tl.confirmed > hotItems {
-					t.Fatalf("every winner confirms and winners cannot exceed items: %+v", tl)
-				}
-			}
-		})
+			})
+		}
 	}
 }
