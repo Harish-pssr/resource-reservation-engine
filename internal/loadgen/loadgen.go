@@ -9,6 +9,10 @@
 //   - measures hold latency from that INTENDED time, not from when the request was actually sent;
 //   - records how late it was in sending (schedule lag), so a reader can tell whether the
 //     generator itself kept up. It must never be the bottleneck.
+//
+// With the waiting room on (Config.Room), a buyer first joins the queue and polls until admitted
+// (D9). Queue wait is reported separately from the store-facing latency, so the room's effect on
+// the store is visible without hiding the wait it imposes on buyers.
 package loadgen
 
 import (
@@ -19,6 +23,7 @@ import (
 	"io"
 	"math/rand/v2"
 	"net/http"
+	"sort"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -57,6 +62,11 @@ type Config struct {
 	RunID          string
 	HoldTimeout    time.Duration
 	ConfirmTimeout time.Duration
+
+	// Waiting room (D9). Room makes every buyer join the queue and poll until admitted before holding.
+	Room            bool
+	RoomWaitTimeout time.Duration // a buyer gives up waiting after this long (default 2 min)
+	RoomPollMin     time.Duration // never poll more often than this (default 100 ms)
 }
 
 // Ref is a hold reference as returned by the API.
@@ -69,22 +79,41 @@ type Ref struct {
 const (
 	HoldHeld        = "held"
 	HoldUnavailable = "unavailable"
-	HoldBusy        = "lock_busy" // still busy after the retry budget
-	HoldError       = "error"     // transport error or unexpected status: the outcome is unknown
+	HoldBusy        = "lock_busy"    // still busy after the retry budget
+	HoldNotAdmitted = "not_admitted" // the API required a pass this buyer did not have
+	HoldError       = "error"        // transport error or unexpected status: the outcome is unknown
+)
+
+// Waiting-room outcomes as seen by the client. Empty when the room is not used.
+const (
+	RoomAdmitted   = "admitted"
+	RoomTurnedAway = "turned_away" // the room was full: retry
+	RoomGaveUp     = "gave_up"     // waited longer than the buyer's patience
+	RoomError      = "error"
 )
 
 // BuyerResult is everything the client knows about one buyer. The per-buyer log is what the
 // reconciliation against the database uses (requests of unknown outcome are the ones with errors).
 type BuyerResult struct {
-	Buyer          string        `json:"buyer"`
-	RequestID      string        `json:"request_id"`
-	Items          []int64       `json:"items"`
-	Sent           bool          `json:"sent"`
-	Lag            time.Duration `json:"lag_ns"`
-	HoldOutcome    string        `json:"hold_outcome"`
-	Attempts       int           `json:"attempts"`
-	HoldLatency    time.Duration `json:"hold_latency_ns"` // intended send time -> final hold answer, retries included
-	Refs           []Ref         `json:"refs,omitempty"`
+	Buyer     string        `json:"buyer"`
+	RequestID string        `json:"request_id"`
+	Items     []int64       `json:"items"`
+	Sent      bool          `json:"sent"`
+	Lag       time.Duration `json:"lag_ns"`
+
+	// Waiting room (D9).
+	RoomOutcome  string        `json:"room_outcome,omitempty"`
+	Ticket       int64         `json:"ticket,omitempty"`      // arrival sequence at the room
+	AdmitOrder   int64         `json:"admit_order,omitempty"` // order in which the room admitted buyers
+	JoinPosition int           `json:"join_position,omitempty"`
+	QueueWait    time.Duration `json:"queue_wait_ns,omitempty"` // join sent -> admission seen
+
+	HoldOutcome string        `json:"hold_outcome"`
+	Attempts    int           `json:"attempts"`
+	HoldLatency time.Duration `json:"hold_latency_ns"`                 // intended send time -> final hold answer (queue wait and retries included)
+	StoreHold   time.Duration `json:"store_hold_latency_ns,omitempty"` // first hold request sent -> final hold answer (retries included, queue wait excluded)
+	Refs        []Ref         `json:"refs,omitempty"`
+
 	ConfirmOutcome string        `json:"confirm_outcome,omitempty"` // confirmed, hold_lost, payment_failed, payment_timeout, payment_in_progress, error
 	AfterExpiry    bool          `json:"after_expiry,omitempty"`
 	Replayed       bool          `json:"replayed,omitempty"`
@@ -97,15 +126,22 @@ type client struct {
 	base string
 }
 
-func (c *client) post(ctx context.Context, path string, body any, timeout time.Duration) (int, map[string]any, error) {
-	b, _ := json.Marshal(body)
+func (c *client) do(ctx context.Context, method, path string, body any, token string, timeout time.Duration) (int, map[string]any, error) {
+	var rd io.Reader
+	if body != nil {
+		b, _ := json.Marshal(body)
+		rd = bytes.NewReader(b)
+	}
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.base+path, bytes.NewReader(b))
+	req, err := http.NewRequestWithContext(ctx, method, c.base+path, rd)
 	if err != nil {
 		return 0, nil, err
 	}
 	req.Header.Set("Content-Type", "application/json")
+	if token != "" {
+		req.Header.Set("X-Admission-Token", token)
+	}
 	resp, err := c.http.Do(req)
 	if err != nil {
 		return 0, nil, err
@@ -120,11 +156,62 @@ func (c *client) post(ctx context.Context, path string, body any, timeout time.D
 	return resp.StatusCode, out, nil
 }
 
-func (c *client) hold(ctx context.Context, cfg Config, r *BuyerResult, intended time.Time) {
+func (c *client) post(ctx context.Context, path string, body any, timeout time.Duration) (int, map[string]any, error) {
+	return c.do(ctx, http.MethodPost, path, body, "", timeout)
+}
+
+func num(m map[string]any, key string) float64 { v, _ := m[key].(float64); return v }
+
+// admit runs the waiting-room protocol (D9): join, then poll until admitted, turned away or out of
+// patience. It returns the pass token ("" if the buyer was not admitted).
+func (c *client) admit(ctx context.Context, cfg Config, r *BuyerResult) string {
+	joined := time.Now()
+	status, out, err := c.post(ctx, "/queue/join", map[string]any{"buyer_id": r.Buyer}, cfg.HoldTimeout)
+	deadline := joined.Add(cfg.RoomWaitTimeout)
+	rejoins := 0
+	for {
+		if err != nil {
+			r.RoomOutcome, r.Err = RoomError, err.Error()
+			return ""
+		}
+		state, _ := out["state"].(string)
+		switch {
+		case status == http.StatusTooManyRequests:
+			r.RoomOutcome = RoomTurnedAway
+			return ""
+		case status == http.StatusOK && state == "admitted":
+			token, _ := out["token"].(string)
+			r.RoomOutcome, r.AdmitOrder, r.QueueWait = RoomAdmitted, int64(num(out, "admit_order")), time.Since(joined)
+			return token
+		case status == http.StatusOK && state == "queued":
+			if r.Ticket == 0 {
+				r.Ticket, r.JoinPosition = int64(num(out, "ticket")), int(num(out, "position"))
+			}
+		case status == http.StatusNotFound && rejoins < 3: // the queue was lost: join again at the back
+			rejoins++
+			status, out, err = c.post(ctx, "/queue/join", map[string]any{"buyer_id": r.Buyer}, cfg.HoldTimeout)
+			continue
+		default:
+			r.RoomOutcome, r.Err = RoomError, fmt.Sprintf("unexpected room status %d", status)
+			return ""
+		}
+		if time.Now().After(deadline) {
+			r.RoomOutcome = RoomGaveUp
+			r.QueueWait = time.Since(joined)
+			return ""
+		}
+		wait := time.Duration(num(out, "retry_after_ms")) * time.Millisecond
+		time.Sleep(min(max(wait, cfg.RoomPollMin), 2*time.Second))
+		status, out, err = c.do(ctx, http.MethodGet, "/queue/"+r.Buyer, nil, "", cfg.HoldTimeout)
+	}
+}
+
+func (c *client) hold(ctx context.Context, cfg Config, r *BuyerResult, intended time.Time, token string) {
 	body := map[string]any{"buyer_id": r.Buyer, "request_id": r.RequestID, "item_ids": r.Items}
+	first := time.Now()
 	for attempt := 0; ; attempt++ {
 		r.Attempts = attempt + 1
-		status, out, err := c.post(ctx, "/holds", body, cfg.HoldTimeout)
+		status, out, err := c.do(ctx, http.MethodPost, "/holds", body, token, cfg.HoldTimeout)
 		switch {
 		case err != nil:
 			r.HoldOutcome, r.Err = HoldError, err.Error()
@@ -133,13 +220,13 @@ func (c *client) hold(ctx context.Context, cfg Config, r *BuyerResult, intended 
 			if raw, ok := out["items"].([]any); ok {
 				for _, it := range raw {
 					m, _ := it.(map[string]any)
-					id, _ := m["item_id"].(float64)
-					v, _ := m["hold_version"].(float64)
-					r.Refs = append(r.Refs, Ref{ItemID: int64(id), HoldVersion: int64(v)})
+					r.Refs = append(r.Refs, Ref{ItemID: int64(num(m, "item_id")), HoldVersion: int64(num(m, "hold_version"))})
 				}
 			}
 		case status == http.StatusConflict:
 			r.HoldOutcome = HoldUnavailable
+		case status == http.StatusForbidden:
+			r.HoldOutcome = HoldNotAdmitted
 		case status == http.StatusServiceUnavailable:
 			r.HoldOutcome = HoldBusy
 			if attempt < cfg.Retry.MaxRetries {
@@ -150,6 +237,7 @@ func (c *client) hold(ctx context.Context, cfg Config, r *BuyerResult, intended 
 			r.HoldOutcome, r.Err = HoldError, fmt.Sprintf("unexpected status %d", status)
 		}
 		r.HoldLatency = time.Since(intended)
+		r.StoreHold = time.Since(first)
 		return
 	}
 }
@@ -203,6 +291,12 @@ func Run(ctx context.Context, cfg Config) (Result, error) {
 	if cfg.ConfirmTimeout <= 0 {
 		cfg.ConfirmTimeout = 60 * time.Second
 	}
+	if cfg.RoomWaitTimeout <= 0 {
+		cfg.RoomWaitTimeout = 2 * time.Minute
+	}
+	if cfg.RoomPollMin <= 0 {
+		cfg.RoomPollMin = 100 * time.Millisecond
+	}
 	if cfg.RunID == "" {
 		cfg.RunID = fmt.Sprintf("run-%d", time.Now().Unix())
 	}
@@ -234,7 +328,13 @@ func Run(ctx context.Context, cfg Config) (Result, error) {
 		r := &results[i]
 		r.Sent = true
 		r.Lag = time.Since(intended)
-		c.hold(ctx, cfg, r, intended)
+		token := ""
+		if cfg.Room {
+			if token = c.admit(ctx, cfg, r); r.RoomOutcome != RoomAdmitted {
+				return // turned away, out of patience, or an error: this buyer never reaches the store
+			}
+		}
+		c.hold(ctx, cfg, r, intended, token)
 		if r.HoldOutcome == HoldHeld {
 			c.confirm(ctx, cfg, r)
 		}
@@ -278,26 +378,60 @@ func Run(ctx context.Context, cfg Config) (Result, error) {
 // CreateEvent seeds an event with n items through the API and returns its id and item ids in order.
 func CreateEvent(ctx context.Context, baseURL string, n int) (int64, []int64, error) {
 	c := &client{base: baseURL, http: &http.Client{}}
-	b, _ := json.Marshal(map[string]any{"name": "loadgen", "items": n})
-	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute) // seeding a large event takes a moment
-	defer cancel()
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.base+"/events", bytes.NewReader(b))
+	status, out, err := c.post(ctx, "/events", map[string]any{"name": "loadgen", "items": n}, 2*time.Minute) // seeding a large event takes a moment
 	if err != nil {
 		return 0, nil, err
 	}
-	req.Header.Set("Content-Type", "application/json")
-	resp, err := c.http.Do(req)
-	if err != nil {
-		return 0, nil, err
+	if status != http.StatusCreated {
+		return 0, nil, fmt.Errorf("create event: status %d: %v", status, out)
 	}
-	defer resp.Body.Close()
-	raw, _ := io.ReadAll(resp.Body)
-	var ev struct {
-		EventID int64   `json:"event_id"`
-		ItemIDs []int64 `json:"item_ids"`
+	var ids []int64
+	if raw, ok := out["item_ids"].([]any); ok {
+		for _, v := range raw {
+			f, _ := v.(float64)
+			ids = append(ids, int64(f))
+		}
 	}
-	if resp.StatusCode != http.StatusCreated || json.Unmarshal(raw, &ev) != nil {
-		return 0, nil, fmt.Errorf("create event: status %d: %s", resp.StatusCode, raw)
+	return int64(num(out, "event_id")), ids, nil
+}
+
+// FIFOInversions counts pairs of admitted buyers whose admission order differs from their arrival
+// order at the room. The room guarantees 0 for buyers who keep polling (D9): this is the measured
+// check behind the word "fair". Buyers without both numbers are ignored.
+func FIFOInversions(buyers []BuyerResult) int {
+	type pair struct{ ticket, order int64 }
+	var ps []pair
+	for _, b := range buyers {
+		if b.Ticket > 0 && b.AdmitOrder > 0 {
+			ps = append(ps, pair{b.Ticket, b.AdmitOrder})
+		}
 	}
-	return ev.EventID, ev.ItemIDs, nil
+	sort.Slice(ps, func(i, j int) bool { return ps[i].ticket < ps[j].ticket })
+	// Count inversions in the sequence of admission orders with a Fenwick tree: O(n log n).
+	orders := make([]int64, len(ps))
+	for i, p := range ps {
+		orders[i] = p.order
+	}
+	sorted := append([]int64(nil), orders...)
+	sort.Slice(sorted, func(i, j int) bool { return sorted[i] < sorted[j] })
+	rank := func(v int64) int { return sort.Search(len(sorted), func(i int) bool { return sorted[i] >= v }) + 1 }
+	tree := make([]int, len(sorted)+2)
+	add := func(i int) {
+		for ; i < len(tree); i += i & -i {
+			tree[i]++
+		}
+	}
+	sum := func(i int) (s int) {
+		for ; i > 0; i -= i & -i {
+			s += tree[i]
+		}
+		return
+	}
+	inv := 0
+	for i, v := range orders {
+		r := rank(v)
+		inv += i - sum(r) // earlier arrivals that were admitted after this one
+		add(r)
+	}
+	return inv
 }
