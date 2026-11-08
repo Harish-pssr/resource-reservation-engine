@@ -99,6 +99,9 @@ type harness struct {
 	out      string
 	env      bench.Environment
 	keepLogs bool
+	// allowFaults is true only for the failure experiments (E4). Throughput, capacity and surge runs must
+	// never run with fault injection enabled (D13): the hooks add polling load and could skew the numbers.
+	allowFaults bool
 }
 
 func freePort() (int, error) {
@@ -137,7 +140,7 @@ func (h *harness) startAPI(ctx context.Context, p runParams, pc payment.Config) 
 	cmd := exec.CommandContext(ctx, h.apiBin)
 	cmd.Env = append(os.Environ(),
 		"STRATEGY="+p.APIStrategy, "SCHEMA="+p.Schema, "PAYMENT_PROFILE="+p.PaymentProfile,
-		"HOLD_TTL="+p.HoldTTL, fmt.Sprintf("ROOM_RATE=%g", p.RoomRate), "HTTP_ADDR="+addr, "DATABASE_URL="+h.dbURL, "REDIS_ADDR="+h.redis,
+		"HOLD_TTL="+p.HoldTTL, fmt.Sprintf("FAULTS_ENABLED=%t", h.allowFaults), fmt.Sprintf("ROOM_RATE=%g", p.RoomRate), "HTTP_ADDR="+addr, "DATABASE_URL="+h.dbURL, "REDIS_ADDR="+h.redis,
 		fmt.Sprintf("DB_POOL_SIZE=%d", p.DBPoolSize))
 	if h.keepLogs {
 		cmd.Stdout, cmd.Stderr = os.Stdout, os.Stderr
@@ -148,8 +151,11 @@ func (h *harness) startAPI(ctx context.Context, p runParams, pc payment.Config) 
 	base := "http://" + addr
 	deadline := time.Now().Add(60 * time.Second)
 	for time.Now().Before(deadline) {
-		if resp, err := http.Get(base + "/metrics"); err == nil {
-			resp.Body.Close()
+		if body, err := fetch(base + "/metrics"); err == nil {
+			if err := refuseIfFaultsEnabled(body, h.allowFaults); err != nil {
+				cmd.Process.Kill()
+				return nil, "", err
+			}
 			return cmd, base, nil
 		}
 		time.Sleep(100 * time.Millisecond)
@@ -266,3 +272,18 @@ func (h *harness) write(r *record, buyers []loadgen.BuyerResult) error {
 
 func defaultDB() string    { return config.FromEnv().DatabaseURL }
 func defaultRedis() string { return config.FromEnv().RedisAddr }
+
+// refuseIfFaultsEnabled reads /metrics and refuses a measurement run against a server that has fault
+// injection switched on. The failure experiments pass allow=true.
+func refuseIfFaultsEnabled(metrics []byte, allow bool) error {
+	var m struct {
+		FaultsEnabled bool `json:"faults_enabled"`
+	}
+	if err := json.Unmarshal(metrics, &m); err != nil {
+		return fmt.Errorf("cannot tell whether fault injection is enabled: %w", err)
+	}
+	if m.FaultsEnabled && !allow {
+		return fmt.Errorf("fault injection is enabled on the server under test: refusing to take a measurement (D13)")
+	}
+	return nil
+}

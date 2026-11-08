@@ -52,6 +52,9 @@ var Known = map[string][]Action{
 	"confirm.skip_payment_marker": {Disable},
 }
 
+// Aware is implemented by components that call hooks: the server hands them the registry at start.
+type Aware interface{ SetFaults(*Registry) }
+
 // ErrInjected is the error returned by the Error action.
 type ErrInjected struct{ Point string }
 

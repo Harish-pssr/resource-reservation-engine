@@ -11,15 +11,19 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
+	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"resourcereservation/internal/db"
+	"resourcereservation/internal/faults"
 	"resourcereservation/internal/metrics"
 	"resourcereservation/internal/payment"
 	"resourcereservation/internal/reservation"
@@ -35,6 +39,9 @@ type Deps struct {
 	MaxItems int // largest request, 6 by default
 	// Room is the waiting room (D9); nil disables admission control.
 	Room *waitingroom.Room
+	// Faults is the fault registry (D13); nil disables injection. AdminToken guards its controls.
+	Faults     *faults.Registry
+	AdminToken string
 	// Metrics receives request counters and latency histograms; New creates one if nil.
 	Metrics *metrics.Registry
 }
@@ -42,14 +49,16 @@ type Deps struct {
 // Stats counts outcomes the benchmarks report (D4): how often a late confirm won, and how
 // often a buyer paid and still lost the item.
 type Stats struct {
-	ConfirmedInTime      atomic.Int64
-	ConfirmedAfterExpiry atomic.Int64
-	ConfirmReplayed      atomic.Int64
-	PaidButLost          atomic.Int64 // payment succeeded, then the hold was no longer the buyer's
-	PaymentFailed        atomic.Int64
-	PaymentTimedOut      atomic.Int64
-	PaymentInProgress    atomic.Int64
-	RoomFailOpen         atomic.Int64 // requests let through because Redis was unreachable (D9)
+	ConfirmedInTime       atomic.Int64
+	ConfirmedAfterExpiry  atomic.Int64
+	ConfirmReplayed       atomic.Int64
+	PaidButLost           atomic.Int64 // payment succeeded, then the hold was no longer the buyer's
+	PaymentFailed         atomic.Int64
+	PaymentTimedOut       atomic.Int64
+	PaymentInProgress     atomic.Int64
+	PaymentAttempts       atomic.Int64 // payments started (simulated)
+	MaxConcurrentPayments atomic.Int64 // most payments in flight at once for one hold: above 1 means a double payment (D5 marker)
+	RoomFailOpen          atomic.Int64 // requests let through because Redis was unreachable (D9)
 }
 
 // Handler serves the API.
@@ -60,6 +69,9 @@ type Handler struct {
 
 	inflight    atomic.Int64
 	maxInflight atomic.Int64
+
+	payMu     sync.Mutex
+	payActive map[string]int // payments in flight, per hold
 }
 
 // New builds the handler.
@@ -70,7 +82,7 @@ func New(d Deps) *Handler {
 	if d.Metrics == nil {
 		d.Metrics = metrics.NewRegistry()
 	}
-	h := &Handler{d: d, mux: http.NewServeMux()}
+	h := &Handler{d: d, mux: http.NewServeMux(), payActive: map[string]int{}}
 	h.mux.HandleFunc("POST /events", h.createEvent)
 	h.mux.HandleFunc("GET /events/{id}/availability", h.availability)
 	h.mux.HandleFunc("POST /holds", h.hold)
@@ -79,6 +91,7 @@ func New(d Deps) *Handler {
 	h.mux.HandleFunc("POST /queue/join", h.queueJoin)
 	h.mux.HandleFunc("GET /queue/{buyer}", h.queuePoll)
 	h.mux.HandleFunc("GET /stats", h.stats)
+	h.registerAdmin()
 	h.mux.HandleFunc("GET /metrics", h.metrics)
 	return h
 }
@@ -95,6 +108,9 @@ func (w *statusWriter) WriteHeader(code int) { w.status = code; w.ResponseWriter
 func route(r *http.Request) string {
 	if strings.HasPrefix(r.URL.Path, "/events/") && strings.HasSuffix(r.URL.Path, "/availability") {
 		return r.Method + " /events/:id/availability"
+	}
+	if strings.HasPrefix(r.URL.Path, "/admin/faults/") {
+		return r.Method + " /admin/faults/:point"
 	}
 	if strings.HasPrefix(r.URL.Path, "/queue/") && r.URL.Path != "/queue/join" {
 		return r.Method + " /queue/:buyer"
@@ -230,6 +246,12 @@ func (h *Handler) hold(w http.ResponseWriter, r *http.Request) {
 		fail(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	if res.Outcome == reservation.Held { // row 9: dying here leaves a committed hold the client never hears about
+		if err := h.d.Faults.Hit(r.Context(), "hold.before_reply"); err != nil {
+			fail(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+	}
 	switch res.Outcome {
 	case reservation.Held:
 		items := make([]map[string]any, len(res.Items))
@@ -266,7 +288,15 @@ func (h *Handler) confirm(w http.ResponseWriter, r *http.Request) {
 	ref := b.ref()
 	ctx := r.Context()
 
-	started, err := h.d.Service.StartPayment(ctx, ref, h.markerTimeout())
+	var (
+		started reservation.Outcome
+		err     error
+	)
+	if _, skip := h.d.Faults.Active("confirm.skip_payment_marker"); skip {
+		started = reservation.PaymentStarted // negative control (D13): the marker is neither checked nor set
+	} else {
+		started, err = h.d.Service.StartPayment(ctx, ref, h.markerTimeout())
+	}
 	if err != nil {
 		fail(w, http.StatusInternalServerError, err.Error())
 		return
@@ -289,9 +319,19 @@ func (h *Handler) confirm(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if err := h.d.Faults.Hit(ctx, "confirm.after_marker"); err != nil { // row 12: the marker is committed, no payment yet
+		fail(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if err := h.d.Faults.Hit(ctx, "payment.delay"); err != nil {
+		fail(w, http.StatusInternalServerError, err.Error())
+		return
+	}
 	// If the client disconnects here the marker stays and goes stale after the timeout: the
 	// same state a crashed server leaves behind (D5).
-	paid, err := h.d.Payment.Pay(ctx)
+	done := h.trackPayment(ref)
+	paid, err := h.d.Payment.PayWith(ctx, func(c context.Context) error { return h.d.Faults.Hit(c, "confirm.during_payment") }) // row 13
+	done()
 	if err != nil {
 		fail(w, http.StatusServiceUnavailable, "payment interrupted: "+err.Error())
 		return
@@ -313,6 +353,10 @@ func (h *Handler) confirm(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if err := h.d.Faults.Hit(ctx, "confirm.after_payment"); err != nil { // row 15: paid, not yet booked
+		fail(w, http.StatusInternalServerError, err.Error())
+		return
+	}
 	res, err := h.d.Service.Confirm(ctx, ref)
 	if err != nil {
 		fail(w, http.StatusInternalServerError, err.Error())
@@ -320,6 +364,10 @@ func (h *Handler) confirm(w http.ResponseWriter, r *http.Request) {
 	}
 	switch res.Outcome {
 	case reservation.Confirmed:
+		if err := h.d.Faults.Hit(ctx, "confirm.before_reply"); err != nil { // row 17: booked, the client never hears
+			fail(w, http.StatusInternalServerError, err.Error())
+			return
+		}
 		switch {
 		case res.Replayed:
 			h.Stats.ConfirmReplayed.Add(1)
@@ -398,11 +446,13 @@ func (h *Handler) metrics(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{
 		"api": h.d.Metrics.Snapshot(), "strategy": strategy,
 		"inflight": h.inflight.Load(), "max_inflight": h.maxInflight.Load(),
+		"faults_enabled": h.d.Faults.Enabled(),
 		"outcomes": map[string]int64{
 			"confirmed_in_time": s.ConfirmedInTime.Load(), "confirmed_after_expiry": s.ConfirmedAfterExpiry.Load(),
 			"confirm_replayed": s.ConfirmReplayed.Load(), "paid_but_lost": s.PaidButLost.Load(),
 			"payment_failed": s.PaymentFailed.Load(), "payment_timed_out": s.PaymentTimedOut.Load(),
 			"payment_in_progress_replies": s.PaymentInProgress.Load(),
+			"payment_attempts":            s.PaymentAttempts.Load(), "max_concurrent_payments_per_hold": s.MaxConcurrentPayments.Load(),
 		},
 	})
 }
@@ -483,4 +533,34 @@ func (h *Handler) queuePoll(w http.ResponseWriter, r *http.Request) {
 	}
 	st, err := h.d.Room.Poll(r.Context(), r.PathValue("buyer"))
 	h.roomReply(w, st, err)
+}
+
+// trackPayment records that a payment for this hold is in flight and returns the function that records
+// its end. If the payment marker (D5) ever lets a second payment start while one is running, the
+// per-hold maximum rises above 1: the measurement behind the marker's negative control (D13).
+func (h *Handler) trackPayment(ref reservation.HoldRef) func() {
+	ids := make([]int64, len(ref.Items))
+	for i, it := range ref.Items {
+		ids[i] = it.ItemID
+	}
+	slices.Sort(ids)
+	key := ref.BuyerID + fmt.Sprint(ids)
+	h.Stats.PaymentAttempts.Add(1)
+	h.payMu.Lock()
+	h.payActive[key]++
+	n := int64(h.payActive[key])
+	h.payMu.Unlock()
+	for {
+		old := h.Stats.MaxConcurrentPayments.Load()
+		if n <= old || h.Stats.MaxConcurrentPayments.CompareAndSwap(old, n) {
+			break
+		}
+	}
+	return func() {
+		h.payMu.Lock()
+		if h.payActive[key]--; h.payActive[key] <= 0 {
+			delete(h.payActive, key)
+		}
+		h.payMu.Unlock()
+	}
 }

@@ -6,6 +6,7 @@
 //	SCHEMA           protected (default) or unprotected; unprotected has no unique-index backstop
 //	PAYMENT_PROFILE  fast (default) or realistic
 //	HOLD_TTL         hold duration, e.g. 30s (default 300s)
+//	FAULTS_ENABLED   "true" turns on the fault-injection hooks (D13); ADMIN_TOKEN guards their controls
 //	ROOM_RATE        waiting room admission rate in buyers per second; 0 (default) = no waiting room
 //	ROOM_MAX_QUEUE, ROOM_PASS_TTL, ROOM_HEARTBEAT_TTL  waiting room tuning
 package main
@@ -24,6 +25,7 @@ import (
 
 	"resourcereservation/internal/config"
 	"resourcereservation/internal/db"
+	"resourcereservation/internal/faults"
 	"resourcereservation/internal/httpapi"
 	"resourcereservation/internal/payment"
 	"resourcereservation/internal/reservation"
@@ -75,6 +77,15 @@ func run() error {
 	default:
 		return errors.New("unknown STRATEGY " + strategy + " (want locking, optimistic, fastpath or naive)")
 	}
+	// Fault injection (D13): off unless FAULTS_ENABLED=true. The registry polls its settings table.
+	reg := faults.New(pool, cfg.FaultsEnabled, 500*time.Millisecond, slog.Default())
+	if fa, ok := svc.(faults.Aware); ok {
+		fa.SetFaults(reg)
+	}
+	if reg.Enabled() {
+		slog.Warn("FAULT INJECTION IS ENABLED: this server can be made to crash on request")
+		go reg.Run(ctx)
+	}
 	payCfg, err := payment.Profile(envOr("PAYMENT_PROFILE", "fast"))
 	if err != nil {
 		return err
@@ -88,8 +99,9 @@ func run() error {
 	}
 
 	srv := &http.Server{
-		Addr:    cfg.HTTPAddr,
-		Handler: httpapi.New(httpapi.Deps{Service: svc, Payment: payment.New(payCfg), Pool: pool, HoldTTL: cfg.HoldTTL, Room: room}),
+		Addr: cfg.HTTPAddr,
+		Handler: httpapi.New(httpapi.Deps{Service: svc, Payment: payment.New(payCfg), Pool: pool, HoldTTL: cfg.HoldTTL, Room: room,
+			Faults: reg, AdminToken: cfg.AdminToken}),
 	}
 	go func() {
 		<-ctx.Done()

@@ -23,6 +23,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"resourcereservation/internal/faults"
 	"resourcereservation/internal/reservation"
 	"resourcereservation/internal/reservation/rowsql"
 )
@@ -35,10 +36,15 @@ type Store struct {
 	Conflicts atomic.Int64 // conditional writes that changed no row (the transaction was rolled back)
 	Rereads   atomic.Int64 // re-reads done to classify a conflict
 
+	faults *faults.Registry // nil = no fault injection (D13)
+
 	// afterRead runs between the read and the write. Tests use it to simulate another buyer
 	// getting in between; it is nil in production.
 	afterRead func()
 }
+
+// SetFaults hands the strategy the fault registry (D13).
+func (s *Store) SetFaults(f *faults.Registry) { s.faults = f }
 
 // New returns a Store on the given pool.
 func New(pool *pgxpool.Pool) *Store { return &Store{pool: pool} }
@@ -96,6 +102,9 @@ func (s *Store) Hold(ctx context.Context, req reservation.HoldRequest) (reservat
 			return reservation.HoldResult{}, err
 		}
 		res.Items = append(res.Items, it)
+	}
+	if err := s.faults.Hit(ctx, "hold.before_commit"); err != nil { // row 8
+		return reservation.HoldResult{}, err
 	}
 	return res, tx.Commit(ctx)
 }
@@ -199,6 +208,9 @@ func (s *Store) Confirm(ctx context.Context, ref reservation.HoldRef) (reservati
 	if _, err := tx.Exec(ctx, `
 		INSERT INTO bookings (item_id, event_id, buyer_id, hold_version)
 		SELECT id, event_id, $2, hold_version FROM items WHERE id = ANY($1)`, ids, ref.BuyerID); err != nil {
+		return reservation.ConfirmResult{}, err
+	}
+	if err := s.faults.Hit(ctx, "confirm.before_commit"); err != nil { // row 16
 		return reservation.ConfirmResult{}, err
 	}
 	return reservation.ConfirmResult{Outcome: reservation.Confirmed, AfterExpiry: late}, tx.Commit(ctx)

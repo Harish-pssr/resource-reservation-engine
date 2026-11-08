@@ -20,6 +20,10 @@ type Config struct {
 	RoomMaxQueue     int
 	RoomPassTTL      time.Duration
 	RoomHeartbeatTTL time.Duration
+
+	// Fault injection (D13). Off by default; the controls also need the admin token.
+	FaultsEnabled bool
+	AdminToken    string
 }
 
 // FromEnv builds a Config from the environment.
@@ -35,6 +39,9 @@ func FromEnv() Config {
 		RoomMaxQueue:     getInt("ROOM_MAX_QUEUE", 100000),
 		RoomPassTTL:      getDuration("ROOM_PASS_TTL", 5*time.Minute),
 		RoomHeartbeatTTL: getDuration("ROOM_HEARTBEAT_TTL", 30*time.Second),
+
+		FaultsEnabled: os.Getenv("FAULTS_ENABLED") == "true",
+		AdminToken:    os.Getenv("ADMIN_TOKEN"),
 	}
 }
 

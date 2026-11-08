@@ -17,6 +17,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"resourcereservation/internal/faults"
 	"resourcereservation/internal/reservation"
 	"resourcereservation/internal/reservation/rowsql"
 )
@@ -26,7 +27,12 @@ type Store struct {
 	pool *pgxpool.Pool
 	// LockBusy counts holds refused because a row lock was taken (the NOWAIT outcome).
 	LockBusy atomic.Int64
+
+	faults *faults.Registry // nil = no fault injection (D13)
 }
+
+// SetFaults hands the strategy the fault registry (D13).
+func (s *Store) SetFaults(f *faults.Registry) { s.faults = f }
 
 // New returns a Store on the given pool.
 func New(pool *pgxpool.Pool) *Store { return &Store{pool: pool} }
@@ -91,6 +97,9 @@ func (s *Store) Hold(ctx context.Context, req reservation.HoldRequest) (reservat
 		return reservation.HoldResult{}, err
 	}
 	slices.SortFunc(res.Items, func(a, b reservation.HeldItem) int { return int(a.ItemID - b.ItemID) })
+	if err := s.faults.Hit(ctx, "hold.before_commit"); err != nil { // row 8: dying here rolls the transaction back
+		return reservation.HoldResult{}, err
+	}
 	return res, tx.Commit(ctx)
 }
 
@@ -170,6 +179,9 @@ func (s *Store) Confirm(ctx context.Context, ref reservation.HoldRef) (reservati
 	if _, err := tx.Exec(ctx, `
 		INSERT INTO bookings (item_id, event_id, buyer_id, hold_version)
 		SELECT id, event_id, $2, hold_version FROM items WHERE id = ANY($1)`, ids, ref.BuyerID); err != nil {
+		return reservation.ConfirmResult{}, err
+	}
+	if err := s.faults.Hit(ctx, "confirm.before_commit"); err != nil { // row 16
 		return reservation.ConfirmResult{}, err
 	}
 	return reservation.ConfirmResult{Outcome: reservation.Confirmed, AfterExpiry: late}, tx.Commit(ctx)

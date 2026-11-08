@@ -30,3 +30,18 @@ func TestPercentChange(t *testing.T) {
 		t.Errorf("a zero baseline must not divide by zero: %v", got)
 	}
 }
+
+func TestMeasurementRunsRefuseServersWithFaultsEnabled(t *testing.T) {
+	if err := refuseIfFaultsEnabled([]byte(`{"faults_enabled":true}`), false); err == nil {
+		t.Fatal("a throughput run must refuse a server with fault injection on")
+	}
+	if err := refuseIfFaultsEnabled([]byte(`{"faults_enabled":false}`), false); err != nil {
+		t.Fatalf("a clean server is fine: %v", err)
+	}
+	if err := refuseIfFaultsEnabled([]byte(`{"faults_enabled":true}`), true); err != nil {
+		t.Fatalf("the failure experiments may run with faults enabled: %v", err)
+	}
+	if err := refuseIfFaultsEnabled([]byte(`not json`), false); err == nil {
+		t.Fatal("when the state cannot be read, refuse rather than guess")
+	}
+}

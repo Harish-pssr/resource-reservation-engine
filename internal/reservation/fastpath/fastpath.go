@@ -14,6 +14,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"resourcereservation/internal/faults"
 	"resourcereservation/internal/reservation"
 	"resourcereservation/internal/reservation/rowsql"
 )
@@ -43,6 +44,16 @@ type Store struct {
 	pool  *pgxpool.Pool // only for the read that refills the gate after a database "unavailable"
 	cfg   Config
 	Stats Stats
+
+	faults *faults.Registry // nil = no fault injection (D13)
+}
+
+// SetFaults hands the strategy the fault registry, and the inner strategy too (D13).
+func (s *Store) SetFaults(f *faults.Registry) {
+	s.faults = f
+	if fa, ok := s.inner.(faults.Aware); ok {
+		fa.SetFaults(f)
+	}
 }
 
 // New returns a Store.
@@ -81,6 +92,9 @@ func (s *Store) Hold(ctx context.Context, req reservation.HoldRequest) (reservat
 	default:
 		s.Stats.GatePassed.Add(1)
 		claimed = true
+		if err := s.faults.Hit(ctx, "hold.after_gate_claim"); err != nil { // row 6: dying here leaks the claim
+			return reservation.HoldResult{}, err
+		}
 	}
 
 	res, err := s.inner.Hold(ctx, req)
@@ -94,6 +108,9 @@ func (s *Store) Hold(ctx context.Context, req reservation.HoldRequest) (reservat
 		return res, err
 	}
 
+	if err := s.faults.Hit(ctx, "hold.before_gate_extend"); err != nil { // row 10: committed, claim not yet extended
+		return reservation.HoldResult{}, err
+	}
 	// The database accepted: make the claim last as long as the hold. For a replayed hold only the
 	// remaining time is left, so a retry cannot stretch the gate's view past the database's.
 	ttl := req.TTL
@@ -145,7 +162,12 @@ func (s *Store) Confirm(ctx context.Context, ref reservation.HoldRef) (reservati
 	res, err := s.inner.Confirm(ctx, ref)
 	if err == nil && res.Outcome == reservation.Confirmed {
 		ids := rowsql.RefIDs(ref.Items)
-		s.bestEffort(ctx, func(c context.Context) error { return s.gate.MarkSold(c, ids) })
+		s.bestEffort(ctx, func(c context.Context) error {
+			if err := s.faults.Hit(c, "gate.sold_marker"); err != nil { // row 18: the marker is lost, harmlessly
+				return err
+			}
+			return s.gate.MarkSold(c, ids)
+		})
 	}
 	return res, err
 }

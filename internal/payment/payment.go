@@ -62,7 +62,11 @@ func (p *Provider) WithRand(r func() float64) *Provider { return &Provider{cfg: 
 func (p *Provider) Config() Config { return p.cfg }
 
 // Pay runs one simulated payment. It blocks for the simulated time, or until ctx ends.
-func (p *Provider) Pay(ctx context.Context) (Result, error) {
+func (p *Provider) Pay(ctx context.Context) (Result, error) { return p.PayWith(ctx, nil) }
+
+// PayWith is Pay with a callback run halfway through the wait: the point where a process can die
+// "during the payment" (D13). A callback error ends the payment with that error.
+func (p *Provider) PayWith(ctx context.Context, midpoint func(context.Context) error) (Result, error) {
 	roll := p.rand() * 100
 	var wait time.Duration
 	result := Succeeded
@@ -75,6 +79,17 @@ func (p *Provider) Pay(ctx context.Context) (Result, error) {
 		if roll < p.cfg.TimeoutPct+p.cfg.FailPct {
 			result = Failed
 		}
+	}
+	if midpoint != nil {
+		select {
+		case <-time.After(wait / 2):
+		case <-ctx.Done():
+			return "", ctx.Err()
+		}
+		if err := midpoint(ctx); err != nil {
+			return "", err
+		}
+		wait -= wait / 2
 	}
 	select {
 	case <-time.After(wait):
