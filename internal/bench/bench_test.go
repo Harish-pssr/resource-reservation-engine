@@ -41,7 +41,7 @@ func TestParseWindowsPowerState(t *testing.T) {
 func TestCPUPercentFromProcStat(t *testing.T) {
 	// user nice system idle iowait irq softirq steal
 	a, ok1 := parseCPUStat("cpu  100 0 100 700 100 0 0 0 0 0\ncpu0 1 1 1 1 1 1 1 1\n")
-	b, ok2 := parseCPUStat("cpu  200 0 200 800 100 0 0 0 0 0\n")
+	b, ok2 := parseCPUStat("cpu  250 0 250 800 100 0 0 0 0 0\n")
 	if !ok1 || !ok2 {
 		t.Fatal("parse failed")
 	}
