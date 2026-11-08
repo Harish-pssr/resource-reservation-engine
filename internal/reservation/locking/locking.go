@@ -11,15 +11,13 @@ package locking
 import (
 	"context"
 	"errors"
-	"fmt"
 	"slices"
 	"time"
 
-	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"resourcereservation/internal/reservation"
+	"resourcereservation/internal/reservation/rowsql"
 )
 
 // Store implements reservation.Service with row locks.
@@ -30,84 +28,9 @@ func New(pool *pgxpool.Pool) *Store { return &Store{pool: pool} }
 
 var _ reservation.Service = (*Store)(nil)
 
-// lockNotAvailable is the SQLSTATE Postgres raises when NOWAIT finds a row locked.
-const lockNotAvailable = "55P03"
-
-// row is one locked item as seen inside the transaction.
-type row struct {
-	id        int64
-	eventID   int64
-	state     string
-	holder    string
-	requestID string
-	version   int64
-	expiresAt time.Time
-	expired   bool      // held, and the hold time has passed on the database clock
-	payStart  time.Time // zero if no payment marker
-	payFresh  bool      // marker exists and is younger than the timeout given to the query
-}
-
-// takeable is the shared availability predicate (D3): free, or held and expired.
-func (r row) takeable() bool { return r.state == "free" || (r.state == "held" && r.expired) }
-
-// lockRows locks the items in ascending id order. ORDER BY makes Postgres return, and so lock,
-// the rows in id order: the global lock order that prevents deadlocks between multi-item requests.
-func lockRows(ctx context.Context, tx pgx.Tx, ids []int64, noWait bool, payTimeout time.Duration) (map[int64]row, error) {
-	q := `SELECT id, event_id, state, COALESCE(holder, ''), COALESCE(hold_request_id, ''), hold_version,
-	             COALESCE(hold_expires_at, 'epoch'),
-	             state = 'held' AND hold_expires_at < clock_timestamp(),
-	             COALESCE(payment_started_at, 'epoch'),
-	             payment_started_at IS NOT NULL AND payment_started_at > clock_timestamp() - make_interval(secs => $2)
-	      FROM items WHERE id = ANY($1) ORDER BY id FOR UPDATE`
-	if noWait {
-		q += " NOWAIT"
-	}
-	rows, err := tx.Query(ctx, q, ids, payTimeout.Seconds())
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	out := make(map[int64]row, len(ids))
-	for rows.Next() {
-		var r row
-		if err := rows.Scan(&r.id, &r.eventID, &r.state, &r.holder, &r.requestID, &r.version,
-			&r.expiresAt, &r.expired, &r.payStart, &r.payFresh); err != nil {
-			return nil, err
-		}
-		out[r.id] = r
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	if len(out) != len(ids) {
-		return nil, fmt.Errorf("unknown item among %v", ids)
-	}
-	return out, nil
-}
-
-func isLockBusy(err error) bool {
-	var pgErr *pgconn.PgError
-	return errors.As(err, &pgErr) && pgErr.Code == lockNotAvailable
-}
-
-// sortedUnique returns the ids ascending with duplicates removed.
-func sortedUnique(ids []int64) []int64 {
-	out := slices.Clone(ids)
-	slices.Sort(out)
-	return slices.Compact(out)
-}
-
-func refIDs(refs []reservation.ItemRef) []int64 {
-	ids := make([]int64, len(refs))
-	for i, r := range refs {
-		ids[i] = r.ItemID
-	}
-	return sortedUnique(ids)
-}
-
 // Hold reserves all the items or none.
 func (s *Store) Hold(ctx context.Context, req reservation.HoldRequest) (reservation.HoldResult, error) {
-	ids := sortedUnique(req.ItemIDs)
+	ids := rowsql.SortedUnique(req.ItemIDs)
 	if len(ids) == 0 {
 		return reservation.HoldResult{}, errors.New("hold needs at least one item")
 	}
@@ -117,34 +40,20 @@ func (s *Store) Hold(ctx context.Context, req reservation.HoldRequest) (reservat
 	}
 	defer tx.Rollback(ctx)
 
-	locked, err := lockRows(ctx, tx, ids, true, 0)
+	locked, err := rowsql.Read(ctx, tx, ids, rowsql.NoWait, 0)
 	if err != nil {
-		if isLockBusy(err) {
+		if rowsql.IsConflict(err) {
 			return reservation.HoldResult{Outcome: reservation.LockBusy}, nil
 		}
 		return reservation.HoldResult{}, err
 	}
 
 	// A retry of the same request (D5): every row is already this buyer's hold under this request id.
-	replay := true
-	for _, id := range ids {
-		r := locked[id]
-		if !(r.state == "held" && r.holder == req.BuyerID && r.requestID == req.RequestID) {
-			replay = false
-			break
-		}
+	if rowsql.Replay(locked, ids, req.BuyerID, req.RequestID) {
+		return rowsql.ReplayResult(locked, ids), tx.Commit(ctx)
 	}
-	if replay {
-		res := reservation.HoldResult{Outcome: reservation.Held}
-		for _, id := range ids {
-			r := locked[id]
-			res.Items = append(res.Items, reservation.HeldItem{ItemID: id, HoldVersion: r.version, ExpiresAt: r.expiresAt})
-		}
-		return res, tx.Commit(ctx)
-	}
-
 	for _, id := range ids {
-		if !locked[id].takeable() {
+		if !locked[id].Takeable() {
 			return reservation.HoldResult{Outcome: reservation.Unavailable}, nil
 		}
 	}
@@ -179,31 +88,26 @@ func (s *Store) Hold(ctx context.Context, req reservation.HoldRequest) (reservat
 	return res, tx.Commit(ctx)
 }
 
-// ownsHold reports whether the row is still the caller's hold: same buyer, same version.
-func ownsHold(r row, buyer string, version int64) bool {
-	return r.holder == buyer && r.version == version
-}
-
 // StartPayment sets the in-progress marker before the payment step (D5).
 func (s *Store) StartPayment(ctx context.Context, ref reservation.HoldRef, timeout time.Duration) (reservation.Outcome, error) {
-	ids := refIDs(ref.Items)
+	ids := rowsql.RefIDs(ref.Items)
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return "", err
 	}
 	defer tx.Rollback(ctx)
-	locked, err := lockRows(ctx, tx, ids, false, timeout)
+	locked, err := rowsql.Read(ctx, tx, ids, rowsql.Wait, timeout)
 	if err != nil {
 		return "", err
 	}
-	want := versions(ref.Items)
+	want := rowsql.Versions(ref.Items)
 	confirmed := 0
 	for _, id := range ids {
 		r := locked[id]
 		switch {
-		case !ownsHold(r, ref.BuyerID, want[id]):
+		case !r.OwnedBy(ref.BuyerID, want[id]):
 			return reservation.HoldLost, nil
-		case r.state == "confirmed":
+		case r.State == "confirmed":
 			confirmed++
 		}
 	}
@@ -211,7 +115,7 @@ func (s *Store) StartPayment(ctx context.Context, ref reservation.HoldRef, timeo
 		return reservation.Confirmed, nil // already booked: nothing to pay for
 	}
 	for _, id := range ids {
-		if locked[id].payFresh {
+		if locked[id].PayFresh {
 			return reservation.PaymentInProgress, nil
 		}
 	}
@@ -221,37 +125,29 @@ func (s *Store) StartPayment(ctx context.Context, ref reservation.HoldRef, timeo
 	return reservation.PaymentStarted, tx.Commit(ctx)
 }
 
-func versions(refs []reservation.ItemRef) map[int64]int64 {
-	m := make(map[int64]int64, len(refs))
-	for _, r := range refs {
-		m[r.ItemID] = r.HoldVersion
-	}
-	return m
-}
-
 // Confirm books the items if every hold version still matches, even after expiry (D4).
 func (s *Store) Confirm(ctx context.Context, ref reservation.HoldRef) (reservation.ConfirmResult, error) {
-	ids := refIDs(ref.Items)
+	ids := rowsql.RefIDs(ref.Items)
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return reservation.ConfirmResult{}, err
 	}
 	defer tx.Rollback(ctx)
-	locked, err := lockRows(ctx, tx, ids, false, 0)
+	locked, err := rowsql.Read(ctx, tx, ids, rowsql.Wait, 0)
 	if err != nil {
 		return reservation.ConfirmResult{}, err
 	}
-	want := versions(ref.Items)
+	want := rowsql.Versions(ref.Items)
 	held, confirmed, late := 0, 0, false
 	for _, id := range ids {
 		r := locked[id]
-		if !ownsHold(r, ref.BuyerID, want[id]) {
+		if !r.OwnedBy(ref.BuyerID, want[id]) {
 			return reservation.ConfirmResult{Outcome: reservation.HoldLost}, nil
 		}
-		switch r.state {
+		switch r.State {
 		case "held":
 			held++
-			late = late || r.expired
+			late = late || r.Expired
 		case "confirmed":
 			confirmed++
 		}
@@ -275,20 +171,20 @@ func (s *Store) Confirm(ctx context.Context, ref reservation.HoldRef) (reservati
 
 // Release frees the items that are still the caller's hold; anything else is left alone (D4, D5).
 func (s *Store) Release(ctx context.Context, ref reservation.HoldRef) (reservation.Outcome, error) {
-	ids := refIDs(ref.Items)
+	ids := rowsql.RefIDs(ref.Items)
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return "", err
 	}
 	defer tx.Rollback(ctx)
-	locked, err := lockRows(ctx, tx, ids, false, 0)
+	locked, err := rowsql.Read(ctx, tx, ids, rowsql.Wait, 0)
 	if err != nil {
 		return "", err
 	}
-	want := versions(ref.Items)
+	want := rowsql.Versions(ref.Items)
 	var mine []int64
 	for _, id := range ids {
-		if r := locked[id]; r.state == "held" && ownsHold(r, ref.BuyerID, want[id]) {
+		if r := locked[id]; r.State == "held" && r.OwnedBy(ref.BuyerID, want[id]) {
 			mine = append(mine, id)
 		}
 	}
