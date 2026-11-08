@@ -4,9 +4,11 @@
 //
 //	STRATEGY         locking (default), optimistic, fastpath (Redis gate + locking) or naive
 //	SCHEMA           protected (default) or unprotected; unprotected has no unique-index backstop
-//	PAYMENT_PROFILE  fast (default) or realistic
+//	PAYMENT_PROFILE  fast (default) or realistic; PAYMENT_FAIL_PCT and PAYMENT_TIMEOUT_PCT override its failure shares
 //	HOLD_TTL         hold duration, e.g. 30s (default 300s)
 //	FAULTS_ENABLED   "true" turns on the fault-injection hooks (D13); ADMIN_TOKEN guards their controls
+//	GATE_PREFIX, ROOM_PREFIX  Redis key prefixes (default rre: and rroom:), so parallel servers do not share keys
+//	GATE_PENDING_TTL fast-path claim lifetime before the database confirms it (default 2s)
 //	ROOM_RATE        waiting room admission rate in buyers per second; 0 (default) = no waiting room
 //	ROOM_MAX_QUEUE, ROOM_PASS_TTL, ROOM_HEARTBEAT_TTL  waiting room tuning
 package main
@@ -18,6 +20,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strconv"
 	"syscall"
 	"time"
 
@@ -70,8 +73,12 @@ func run() error {
 	case "optimistic":
 		svc = optimistic.New(pool)
 	case "fastpath":
-		gate := fastpath.NewRedisGate(redis.NewClient(&redis.Options{Addr: cfg.RedisAddr}), "rre:")
-		svc = fastpath.New(locking.New(pool), gate, pool, fastpath.DefaultConfig())
+		gate := fastpath.NewRedisGate(redis.NewClient(&redis.Options{Addr: cfg.RedisAddr}), envOr("GATE_PREFIX", "rre:"))
+		fcfg := fastpath.DefaultConfig()
+		if d, err := time.ParseDuration(os.Getenv("GATE_PENDING_TTL")); err == nil && d > 0 {
+			fcfg.PendingTTL = d // how long a claim lives before the database reserve confirms it (default 2s)
+		}
+		svc = fastpath.New(locking.New(pool), gate, pool, fcfg)
 	case "naive":
 		svc = naive.New(pool)
 	default:
@@ -90,10 +97,18 @@ func run() error {
 	if err != nil {
 		return err
 	}
+	// Explicit overrides, so a test can make the simulated payment deterministic (for example 0 percent
+	// failures). Benchmarks use a named profile only, which their records state.
+	if v, err := strconv.ParseFloat(os.Getenv("PAYMENT_FAIL_PCT"), 64); err == nil {
+		payCfg.FailPct = v
+	}
+	if v, err := strconv.ParseFloat(os.Getenv("PAYMENT_TIMEOUT_PCT"), 64); err == nil {
+		payCfg.TimeoutPct = v
+	}
 
 	var room *waitingroom.Room
 	if cfg.RoomRate > 0 {
-		room = waitingroom.New(redis.NewClient(&redis.Options{Addr: cfg.RedisAddr}), "rroom:", waitingroom.Config{
+		room = waitingroom.New(redis.NewClient(&redis.Options{Addr: cfg.RedisAddr}), envOr("ROOM_PREFIX", "rroom:"), waitingroom.Config{
 			Rate: cfg.RoomRate, MaxQueue: cfg.RoomMaxQueue, PassTTL: cfg.RoomPassTTL, HeartbeatTTL: cfg.RoomHeartbeatTTL})
 		go room.Run(ctx) // any number of API instances may run this: the rate budget lives in Redis
 	}

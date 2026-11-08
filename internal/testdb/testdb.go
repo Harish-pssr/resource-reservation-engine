@@ -43,6 +43,23 @@ func create(t *testing.T) (dbURL string) {
 	return u.String()
 }
 
+// NewWithURL is New, and also returns the URL of the throwaway database, so a test can start a separate
+// process (a real API server) against the same data.
+func NewWithURL(t *testing.T, protected bool) (*pgxpool.Pool, string) {
+	t.Helper()
+	schema := db.SchemaUnprotected
+	if protected {
+		schema = db.SchemaProtected
+	}
+	url := create(t)
+	pool, err := db.Setup(context.Background(), url, schema, protected, db.WithMaxConns(testConns))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(pool.Close)
+	return pool, url
+}
+
 // NewEmpty returns a pool on a fresh, empty database.
 func NewEmpty(t *testing.T) *pgxpool.Pool {
 	t.Helper()
