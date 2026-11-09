@@ -50,8 +50,31 @@ $port = ($addr -split ':')[-1]
 $base = "http://127.0.0.1:$port"
 function Get-Health { try { Invoke-RestMethod "$base/healthz" -TimeoutSec 2 } catch { $null } }
 
-if (Get-Health) {
-    Write-Host "the API is already running at $base"
+# Is a running server built from the current code? If the code changed since it was built, restart it,
+# otherwise up would keep serving the old version (including the old console).
+function Test-Stale {
+    $bin = Get-Item 'bin\api.exe' -ErrorAction SilentlyContinue
+    if (-not $bin) { return $true }
+    $newest = Get-ChildItem cmd, internal, web, migrations -Recurse -File -ErrorAction SilentlyContinue |
+        Where-Object { $_.Extension -in '.go', '.sql', '.html', '.css', '.js' } | Sort-Object LastWriteTime -Descending | Select-Object -First 1
+    $mod = Get-Item 'go.mod'
+    return ($newest.LastWriteTime -gt $bin.LastWriteTime) -or ($mod.LastWriteTime -gt $bin.LastWriteTime)
+}
+function Stop-Api {
+    $loops = Get-CimInstance Win32_Process | Where-Object { $_.ProcessId -ne $PID -and $_.Name -match '^(powershell|pwsh)(\.exe)?$' -and $_.CommandLine -match 'up\.ps1.*-RunApiLoop' }
+    foreach ($p in $loops) { Stop-Process -Id $p.ProcessId -Force -ErrorAction SilentlyContinue }
+    Get-Process -Name api -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+    Start-Sleep -Seconds 1
+}
+
+$running = [bool](Get-Health)
+if ($running -and (Test-Stale)) {
+    Write-Host 'the code changed since the running server was built: restarting it'
+    Stop-Api
+    $running = $false
+}
+if ($running) {
+    Write-Host "the API is already running at $base (up to date)"
 } else {
     New-Item -ItemType Directory -Force logs | Out-Null
     $out = Join-Path (Resolve-Path logs) 'api.log'

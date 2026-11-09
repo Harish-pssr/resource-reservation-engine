@@ -39,8 +39,17 @@ port="${addr##*:}"
 base="http://127.0.0.1:$port"
 healthy() { curl -fs -m 2 "$base/healthz" >/dev/null 2>&1; }
 
-if healthy; then
-  echo "the API is already running at $base"
+# If the code changed since the running server was built, restart it: otherwise up would keep serving the old version.
+stale() { [ ! -f bin/api ] || [ -n "$(find cmd internal web migrations go.mod \( -name '*.go' -o -name '*.sql' -o -name '*.html' -o -name '*.css' -o -name '*.js' -o -name go.mod \) -newer bin/api -print -quit 2>/dev/null)" ]; }
+running=false; healthy && running=true
+if $running && stale; then
+  echo "the code changed since the running server was built: restarting it"
+  for pid in $(pgrep -f 'scripts/up.sh --run-api-loop' 2>/dev/null | grep -vx "$$"); do kill "$pid" 2>/dev/null; done
+  pkill -x api 2>/dev/null; sleep 1
+  running=false
+fi
+if $running; then
+  echo "the API is already running at $base (up to date)"
 else
   mkdir -p logs
   nohup "$(pwd)/scripts/up.sh" --run-api-loop > logs/api.log 2>&1 &

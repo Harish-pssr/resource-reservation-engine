@@ -165,54 +165,161 @@ function bindCreateEvent(el, after) {
 const views = {};
 
 // ===== Start =====
+// Hover (or focus, or tap) a numbered step or a lettered failure marker to read what happens there.
+const FLOW_TIPS = {
+  s1: ["1 · Join the queue", "When demand is far above what the database can take, a buyer joins the waiting room and gets a ticket. The queue is held in Redis, so it works across several API servers. Joining twice keeps your place."],
+  s2: ["2 · Admitted, then hold seats", "At a fixed rate the room admits buyers in the order they joined and gives each a pass. The pass lets them call hold, which asks for one to six specific seats, all or nothing."],
+  s3: ["3 · The reserve strategy", "One of several interchangeable strategies decides how contention is handled: row locks, conditional writes, or a Redis gate in front of locking. Every strategy must pass the same behaviour tests."],
+  s4: ["4 · Gate claim (fast path only)", "The gate claims the seats in Redis in one atomic step. If someone already holds them it answers 'taken' without touching the database. It is only a hint: when Redis is empty or down, requests simply reach Postgres."],
+  s5: ["5 · Postgres decides", "A short transaction checks that every seat is free (or its hold has expired) and writes the hold with a version. A unique index refuses a second confirmed booking for any seat, whatever the application does. This is the only place that decides."],
+  s6: ["6 · Pay", "Confirm writes a payment marker, calls the simulated provider (which can be slow, fail or time out), then books the seats. Failure or timeout releases them. A retry during the payment is told it is in progress instead of paying twice."],
+  s7: ["7 · Check", "The checker reads only the database and verifies that no seat has two confirmed bookings, bookings never exceed capacity, every expired hold can be taken over, and the ledger agrees with the seats."],
+  fA: ["A · Dies after the gate claim", "The Redis claim has a short life and lapses by itself. No hold exists, so the seats may be refused for a few seconds (a lost sale) but never double sold. Tested with a real process kill (row 6 of the crash analysis)."],
+  fB: ["B · Dies inside the transaction", "Postgres rolls the transaction back, so a half-held multi-seat request never exists. The retry is a first request. (row 8)"],
+  fC: ["C · Dies after the commit, before the reply", "The hold exists but the buyer never heard. The retry carries the same request id and gets the same hold back, not a second one. (row 9)"],
+  fD: ["D · Dies during the payment", "A marker stops a second payment for a while. A real provider might have charged the buyer, which the simulated one cannot show: a documented limitation. (rows 12, 13, 15)"],
+  fE: ["E · Redis restarts empty", "The gate and the queue are lost. Requests reach Postgres, which stays correct but takes more load; the queue's order is lost and buyers rejoin. (row 20)"],
+  fF: ["F · Postgres restarts", "In-flight transactions are lost and requests fail for a moment. Afterwards the checker and the reconciler judge what was booked. (row 21)"],
+};
+
+const GLOSSARY = [
+  ["Seat (item)", "One reservable unit. It is one row in the database, so it can be held and booked on its own."],
+  ["Event", "A set of numbered seats that buyers compete for."],
+  ["Hold", "A temporary reservation of one to six seats. Nobody else can take them while it lasts. It is a soft limit: if nobody took the seats, paying a little late still works."],
+  ["Expiry", "A hold simply stops counting when its time runs out. Nothing sweeps it, so no crashed process can leave a seat stuck."],
+  ["Version", "A counter that goes up each time a seat is held. A late request carrying an old version is recognised and refused."],
+  ["Confirm", "Paying for a hold. It writes a marker, takes the (simulated) payment, then books the seats."],
+  ["Payment marker", "A mark written before the payment starts, so a retry cannot start a second payment while the first is running."],
+  ["Request id", "A unique id the client sends with a hold. Sending the same id again returns the same hold, never a second one."],
+  ["Strategy", "How contention is handled: locking (row locks), optimistic (conditional writes) or the fast path (a Redis gate in front of locking)."],
+  ["Fast-path gate", "A Redis check in front of Postgres that turns most losing buyers away cheaply. A hint, never the decider."],
+  ["Waiting room", "A first-come-first-served queue in Redis that admits buyers at a fixed rate, protecting the database during a surge."],
+  ["Pass", "The token the waiting room gives an admitted buyer. Placing a hold needs it."],
+  ["System of record", "Postgres. The only place that decides who gets a seat, backed by a unique index that refuses a second booking."],
+  ["Checker", "An independent tool that reads only the database and verifies the rules that must always hold."],
+  ["Unknown outcome", "A request whose answer never arrived (a crash, a timeout). It may or may not have happened; retrying with the same ids is safe."],
+  ["Fail open", "If Redis is down, requests go straight to Postgres instead of being refused: slower, still correct."],
+  ["Paid but lost", "A buyer paid, but another buyer had taken the seat after their hold expired. Counted, not refunded (the payment is simulated)."],
+  ["Skew", "Demand that is concentrated on a few hot seats instead of spread evenly. It is what creates contention."],
+];
+
 views.start = {
-  title: "What is this?",
-  desc: "A reservation engine for scarce items: many buyers, few seats. It holds a seat for a short time, takes a (simulated) payment, and never sells the same seat twice, even when processes crash.",
-  render: () => `
-    <div class="card"><h2>The idea in one minute</h2>
-      <ol class="steps">
-        <li>A buyer <b>joins the waiting room</b> when demand is far above what the database can take. It lets buyers in at a fixed rate, in the order they arrived.</li>
-        <li>The buyer <b>holds</b> one to six seats. A ${term("hold", "hold")} is temporary: nobody else can take those seats while it lasts.</li>
-        <li>The buyer <b>pays</b> (simulated). Success books the seats; failure or timeout releases them.</li>
-        <li>A hold that nobody confirms just <b>expires</b>. No background job frees it, so no crashed process can leave a seat stuck.</li>
-        <li>Only <b>${term("arbiter", "Postgres")}</b> decides who gets a seat. Redis (the fast ${term("gate", "gate")} and the waiting room) is a hint: if it is empty, stale or down, the answer is still correct, only slower.</li>
-      </ol>
+  title: "Start",
+  desc: "What this project is and how one booking travels through it.",
+  render: () => {
+    const point = (t, d) => `<div class="point"><h3>${t}</h3><p>${d}</p></div>`;
+    const go = (href, t, d) => `<a class="nav-card" href="#/${href}"><b>${t}</b><span>${d}</span></a>`;
+    return `
+    <div class="card"><div class="card-head"><h2>About this project</h2></div><div class="prose">
+      <p class="lead-p">When many buyers go for a few seats at once, the hard part is never selling the same seat twice. This engine <strong>holds a seat for a short time, takes a (simulated) payment, and lets only the database decide who gets it</strong>. It stays correct when a process crashes or Redis loses its data.</p>
+      <p class="muted">Built with Go, PostgreSQL, Redis and Docker Compose. The payment and the demand are simulated, so every claim holds "with a simulated payment and simulated demand".</p></div></div>
+
+    <div class="card flow" id="st-flow">
+      <div class="card-head"><h2>How a booking flows</h2>
+        <label class="switch switch-chip" title="Mark where the system can fail, and how it recovers"><input type="checkbox" id="st-fail"><span class="switch-track"></span><span class="switch-label">Show failure points</span></label></div>
+      <p class="muted flow-hint">Hover a number to see what happens at that step. Switch on <strong>Show failure points</strong> to see where it can fail and what is left behind.</p>
+      <div class="key"><span><i></i>Service</span><span><i class="k-store"></i>Database (system of record)</span><span><i class="k-hint"></i>Redis (a hint, never the decider)</span><span><i class="k-ext"></i>Simulated outside service</span><span><i class="k-ctl"></i>Off by default</span><span><span class="dash"></span>Background or verification</span></div>
+      <div class="flow-stage" id="st-stage"><div class="flow-scroll">
+        <svg class="flow-svg" viewBox="0 0 1200 500" role="group" aria-label="Diagram: a buyer joins the waiting room, places a hold through the API, a strategy asks Redis and then Postgres, the API takes a simulated payment, and a checker verifies the database.">
+          <defs><marker id="flow-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path class="arrowhead" d="M0,0 L10,5 L0,10 z"/></marker></defs>
+          <rect class="zone" x="135" y="14" width="850" height="474" rx="14"/><text class="zone-label" x="152" y="34">Your service</text>
+          <rect class="zone" x="1005" y="14" width="185" height="270" rx="14"/><text class="zone-label" x="1022" y="34">Outside (simulated)</text>
+
+          <path class="ar" d="M110,230 H158"/><path class="ar" d="M300,230 H338"/><path class="ar" d="M490,230 H528"/><path class="ar" d="M720,230 H778"/>
+          <path class="ar" d="M230,290 V420 H328"/><path class="ar" d="M625,330 V420 H532"/>
+          <path class="ar" d="M470,150 V45 H990 V135 H1013"/>
+          <path class="ar dashed" d="M400,112 V148"/><path class="ar dashed" d="M840,339 V388"/>
+
+          <g class="fn"><rect x="10" y="200" width="100" height="60" rx="10"/><text x="60" y="222">Buyer</text><text class="t2" x="60" y="240">browser or load</text></g>
+
+          <g class="fn"><rect class="grp" x="160" y="165" width="140" height="125" rx="12"/><text x="230" y="184">Waiting room</text>
+            <rect class="lane" x="172" y="198" width="116" height="38" rx="8"/><text x="230" y="211">FIFO queue</text><text class="t2" x="230" y="226">join, poll</text>
+            <rect class="lane" x="172" y="244" width="116" height="38" rx="8"/><text x="230" y="257">Pass</text><text class="t2" x="230" y="272">admit at rate R</text></g>
+
+          <g class="fn"><rect class="grp" x="340" y="150" width="150" height="160" rx="12"/><text x="415" y="169">API</text>
+            <rect class="lane" x="352" y="182" width="126" height="38" rx="8"/><text x="415" y="195">hold</text><text class="t2" x="415" y="210">POST /holds</text>
+            <rect class="lane" x="352" y="226" width="126" height="38" rx="8"/><text x="415" y="239">confirm and pay</text><text class="t2" x="415" y="254">POST /holds/confirm</text>
+            <rect class="lane" x="352" y="270" width="126" height="34" rx="8"/><text x="415" y="283">release</text><text class="t2" x="415" y="297">POST /holds/release</text></g>
+
+          <g class="fn"><rect class="grp" x="530" y="130" width="190" height="200" rx="12"/><text x="625" y="149">Reserve strategy</text>
+            <rect class="lane" x="542" y="164" width="166" height="44" rx="8"/><text x="625" y="180">Fast-path gate</text><text class="t2" x="625" y="196">asks Redis first</text>
+            <rect class="lane" x="542" y="216" width="166" height="44" rx="8"/><text x="625" y="232">Locking or optimistic</text><text class="t2" x="625" y="248">one short transaction</text>
+            <rect class="lane dashed" x="542" y="268" width="166" height="44" rx="8"/><text x="625" y="284">Naive</text><text class="t2" x="625" y="300">negative control only</text></g>
+
+          <g class="fn"><path class="cyl" d="M780,190 a60,9 0 0 1 120,0 v140 a60,9 0 0 1 -120,0 z"/><path class="cyl-lip" d="M780,190 a60,9 0 0 0 120,0"/>
+            <text x="840" y="222">Postgres</text><text class="t2" x="840" y="242">system of record</text><text class="t2" x="840" y="262">a row per seat</text><text class="t2" x="840" y="278">one booking per seat</text><text class="t2" x="840" y="294">expiry by the clock</text></g>
+
+          <g class="fn"><path class="cyl hint" d="M330,385 a100,9 0 0 1 200,0 v70 a100,9 0 0 1 -200,0 z"/><path class="cyl-lip hint" d="M330,385 a100,9 0 0 0 200,0"/>
+            <text x="430" y="414">Redis</text><text class="t2" x="430" y="432">queue, passes, gate claims</text><text class="t2" x="430" y="448">a hint, never the decider</text></g>
+
+          <g class="fn"><rect x="770" y="390" width="140" height="56" rx="10"/><text x="840" y="410">Checker</text><text class="t2" x="840" y="428">reads only the database</text></g>
+          <g class="fn"><rect class="lane dashed ctl" x="340" y="72" width="120" height="40" rx="8"/><text x="400" y="86">Fault hooks</text><text class="t2" x="400" y="102">off by default</text></g>
+          <g class="fn"><rect class="ext" x="1015" y="70" width="160" height="150" rx="12"/><text x="1095" y="95">Payment</text><text class="t2" x="1095" y="118">simulated provider</text><text class="t2" x="1095" y="146">delay, failure, timeout</text><text class="t2" x="1095" y="180">keeps no memory of past</text><text class="t2" x="1095" y="196">calls: a retry may pay again</text></g>
+
+          <g class="badge" data-tip="s1" tabindex="0" role="button" aria-label="Step 1"><circle cx="134" cy="230" r="11"/><text x="134" y="230">1</text></g>
+          <g class="badge" data-tip="s2" tabindex="0" role="button" aria-label="Step 2"><circle cx="319" cy="230" r="11"/><text x="319" y="230">2</text></g>
+          <g class="badge" data-tip="s3" tabindex="0" role="button" aria-label="Step 3"><circle cx="509" cy="230" r="11"/><text x="509" y="230">3</text></g>
+          <g class="badge" data-tip="s4" tabindex="0" role="button" aria-label="Step 4"><circle cx="625" cy="372" r="11"/><text x="625" y="372">4</text></g>
+          <g class="badge" data-tip="s5" tabindex="0" role="button" aria-label="Step 5"><circle cx="749" cy="230" r="11"/><text x="749" y="230">5</text></g>
+          <g class="badge" data-tip="s6" tabindex="0" role="button" aria-label="Step 6"><circle cx="730" cy="45" r="11"/><text x="730" y="45">6</text></g>
+          <g class="badge" data-tip="s7" tabindex="0" role="button" aria-label="Step 7"><circle cx="840" cy="364" r="11"/><text x="840" y="364">7</text></g>
+
+          <g class="fail-mark" data-tip="fA" tabindex="0" role="button" aria-label="Failure point A"><circle cx="578" cy="420" r="11"/><text x="578" y="420">A</text></g>
+          <g class="fail-mark" data-tip="fB" tabindex="0" role="button" aria-label="Failure point B"><circle cx="905" cy="188" r="11"/><text x="905" y="188">B</text></g>
+          <g class="fail-mark" data-tip="fC" tabindex="0" role="button" aria-label="Failure point C"><circle cx="496" cy="176" r="11"/><text x="496" y="176">C</text></g>
+          <g class="fail-mark" data-tip="fD" tabindex="0" role="button" aria-label="Failure point D"><circle cx="890" cy="45" r="11"/><text x="890" y="45">D</text></g>
+          <g class="fail-mark" data-tip="fE" tabindex="0" role="button" aria-label="Failure point E"><circle cx="320" cy="384" r="11"/><text x="320" y="384">E</text></g>
+          <g class="fail-mark" data-tip="fF" tabindex="0" role="button" aria-label="Failure point F"><circle cx="772" cy="186" r="11"/><text x="772" y="186">F</text></g>
+        </svg></div><div class="flow-tip" id="st-tip" role="tooltip" hidden></div></div>
+      <p class="muted small">The failure points map to the rows of <span class="mono">docs/crash-analysis.md</span>; the <a href="#/failures">Failures</a> page can trigger them.</p>
     </div>
-    <div class="card diagram"><h2>How a booking flows, and where it can fail</h2>
-      <svg viewBox="0 0 960 330" role="img" aria-label="Architecture diagram">
-        <defs><marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z" fill="currentColor" style="color:var(--muted)"/></marker></defs>
-        <rect class="box" x="20" y="130" width="110" height="60" rx="10"/><text x="75" y="156" text-anchor="middle">Buyer</text><text x="75" y="173" text-anchor="middle" class="muted">browser / load</text>
-        <rect class="box" x="170" y="130" width="140" height="60" rx="10"/><text x="240" y="156" text-anchor="middle">Waiting room</text><text x="240" y="173" text-anchor="middle">FIFO queue, passes</text>
-        <rect class="box" x="350" y="130" width="110" height="60" rx="10"/><text x="405" y="156" text-anchor="middle">API</text><text x="405" y="173" text-anchor="middle">hold, confirm</text>
-        <rect class="box" x="500" y="130" width="150" height="60" rx="10"/><text x="575" y="156" text-anchor="middle">Strategy</text><text x="575" y="173" text-anchor="middle">lock / optimistic / gate</text>
-        <rect class="box store" x="700" y="130" width="160" height="60" rx="10"/><text x="780" y="156" text-anchor="middle">Postgres</text><text x="780" y="173" text-anchor="middle">system of record</text>
-        <rect class="box store" x="270" y="250" width="200" height="50" rx="10"/><text x="370" y="272" text-anchor="middle">Redis</text><text x="370" y="288" text-anchor="middle">queue + gate (a hint)</text>
-        <rect class="box" x="490" y="30" width="170" height="50" rx="10"/><text x="575" y="52" text-anchor="middle">Payment</text><text x="575" y="68" text-anchor="middle">simulated</text>
-        <path class="arrow" d="M130 160H168" marker-end="url(#ah)"/><path class="arrow" d="M310 160H348" marker-end="url(#ah)"/>
-        <path class="arrow" d="M460 160H498" marker-end="url(#ah)"/><path class="arrow" d="M650 160H698" marker-end="url(#ah)"/>
-        <path class="arrow" d="M405 130V80H488" marker-end="url(#ah)"/><path class="arrow" d="M240 190V250H268" marker-end="url(#ah)"/><path class="arrow" d="M575 190V225H470V250" marker-end="url(#ah)"/>
-        <g class="badge-c"><circle cx="150" cy="144" r="10"/><text x="150" y="144">1</text></g>
-        <g class="badge-c"><circle cx="329" cy="144" r="10"/><text x="329" y="144">2</text></g>
-        <g class="badge-c"><circle cx="479" cy="144" r="10"/><text x="479" y="144">3</text></g>
-        <g class="badge-c"><circle cx="675" cy="144" r="10"/><text x="675" y="144">4</text></g>
-        <g class="badge-c"><circle cx="440" cy="58" r="10"/><text x="440" y="58">5</text></g>
-        <g class="fail"><circle cx="560" cy="205" r="10"/><text x="560" y="205">A</text><title>Process dies after the gate claim, before the database: the claim lapses by itself.</title></g>
-        <g class="fail"><circle cx="755" cy="112" r="10"/><text x="755" y="112">B</text><title>Process dies inside the transaction: Postgres rolls it back, nothing is left.</title></g>
-        <g class="fail"><circle cx="405" cy="112" r="10"/><text x="405" y="112">C</text><title>Process dies after the commit, before the reply: the retry returns the same hold.</title></g>
-        <g class="fail"><circle cx="672" cy="40" r="10"/><text x="672" y="40">D</text><title>Process dies during the payment: a marker stops a second payment until it goes stale.</title></g>
-        <g class="fail"><circle cx="330" cy="236" r="10"/><text x="330" y="236">E</text><title>Redis restarts empty: requests reach Postgres, which stays correct.</title></g>
-        <g class="fail"><circle cx="840" cy="112" r="10"/><text x="840" y="112">F</text><title>Postgres restarts: in-flight transactions are lost; the checker judges the result.</title></g>
-      </svg>
-      <p class="muted small">Numbers are the normal flow (1 join, 2 admitted, 3 hold, 4 the database decides, 5 payment). Letters are failure points: hover one. They map to the rows of <span class="mono">docs/crash-analysis.md</span>; the <a href="#/failures">Failures</a> page can trigger them.</p>
-    </div>
-    <div class="grid g2">
-      <div class="card"><h2>Where to look</h2>
-        <p><b>Live seat map</b> shows every seat changing state as real traffic arrives, with hold countdowns.</p>
-        <p><b>Book seats</b> lets you hold and pay yourself. <b>Surge</b> sends a crowd. <b>Failures</b> kills the API at an exact moment. <b>Checker</b> proves, from the database alone, that nothing was sold twice.</p></div>
-      <div class="card"><h2>Words</h2>
-        <p>${term("hold", "Hold")} · ${term("version", "Version")} · ${term("expiry", "Expiry")} · ${term("gate", "Gate")} · ${term("marker", "Payment marker")} · ${term("arbiter", "Arbiter")}</p>
-        <p class="muted small">Hover a word for its meaning. Times in the seat map come from the database clock, not from your browser.</p></div>
-    </div>`,
+
+    <div class="card"><div class="card-head"><h2>Guarantees</h2></div><div class="point-grid">
+      ${point("Never sold twice", "Postgres alone decides, and a unique index refuses a second confirmed booking for any seat, whatever the application, the cache or a crash does.")}
+      ${point("Safe retries", "Sending the same request again returns the same hold, or the same booking. A retry during a payment is told it is in progress instead of paying twice.")}
+      ${point("Holds that free themselves", "A hold stops counting when its time runs out. There is no cleanup job to die, so a crash cannot leave a seat stuck.")}
+      ${point("Survives a lost cache", "Redis holds only hints. If it restarts empty or is down, requests reach Postgres: slower, never wrong.")}
+      ${point("A queue that keeps its order", "The waiting room admits buyers first come, first in, at a fixed rate, and it never decides who gets a seat.")}
+      ${point("Checked independently", "A separate checker reads only the database and verifies the rules after every experiment, including runs with real crashes.")}
+    </div></div>
+
+    <div class="card"><div class="card-head"><h2>Where to look</h2></div><div class="nav-cards">
+      ${go("inventory", "Live seat map", "Every seat changing state as traffic arrives, with hold countdowns.")}
+      ${go("book", "Book seats", "Hold and pay yourself, and retry a request to see it stay safe.")}
+      ${go("surge", "Surge", "Send a crowd at an event and watch the hot seats go first.")}
+      ${go("failures", "Failures", "Kill the server at an exact moment and see what is left.")}
+      ${go("checker", "Checker", "Prove from the database alone that nothing was sold twice.")}
+      ${go("room", "Waiting room", "The queue, its rate, and what it does and does not promise.")}
+    </div></div>
+
+    <div class="card" id="st-glossary"><div class="card-head"><h2>Glossary</h2>
+      <label class="switch switch-chip" title="Show the definitions of the words used in this console"><input type="checkbox" id="st-gloss"><span class="switch-track"></span><span class="switch-label">Show definitions</span></label></div>
+      <dl class="glossary">${GLOSSARY.map(([t, d]) => `<div><dt>${esc(t)}</dt><dd>${esc(d)}</dd></div>`).join("")}</dl></div>`;
+  },
+  refresh(el) {
+    if (el.dataset.bound) return; // the Start page is static: wire it once
+    el.dataset.bound = "1";
+    $("#st-fail", el).onchange = (e) => $("#st-flow", el).classList.toggle("show-fail", e.target.checked);
+    $("#st-gloss", el).onchange = (e) => $("#st-glossary", el).classList.toggle("show-glossary", e.target.checked);
+    const stage = $("#st-stage", el), tip = $("#st-tip", el);
+    const showTip = (node) => {
+      const info = FLOW_TIPS[node.dataset.tip];
+      if (!info) return;
+      tip.innerHTML = `<strong>${esc(info[0])}</strong><p>${esc(info[1])}</p>`;
+      tip.classList.toggle("fail", node.dataset.tip.startsWith("f"));
+      tip.hidden = false;
+      const box = stage.getBoundingClientRect(), r = node.getBoundingClientRect(), w = tip.offsetWidth;
+      tip.style.left = Math.max(0, Math.min(r.left - box.left + r.width / 2 - w / 2, box.width - w)) + "px";
+      tip.style.top = (r.bottom - box.top + 8) + "px";
+    };
+    const hide = () => { tip.hidden = true; };
+    const target = (e) => e.target.closest && e.target.closest("[data-tip]");
+    stage.addEventListener("pointerover", (e) => { const n = target(e); if (n) showTip(n); });
+    stage.addEventListener("pointerout", (e) => { if (target(e)) hide(); });
+    stage.addEventListener("focusin", (e) => { const n = target(e); if (n) showTip(n); });
+    stage.addEventListener("focusout", hide);
+    stage.addEventListener("click", (e) => { const n = target(e); if (n) showTip(n); });
+  },
 };
 
 // ===== Overview =====
@@ -272,7 +379,7 @@ views.inventory = {
     const r = await api(`/events/${state.eventId}/items`);
     if (!r.ok) { $("#inv-map", el).innerHTML = `<div class="note warn">Could not read the event.</div>`; return; }
     const items = r.body.items, n = (s) => items.filter((i) => i.state === s).length;
-    $("#inv-sum", el).innerHTML = `<span class="chip">${n("free")} free</span><span class="chip">${n("held")} held</span><span class="chip">${n("confirmed")} booked</span>` + (r.body.truncated ? `<span class="chip">showing the first ${items.length}</span>` : "");
+    $("#inv-sum", el).innerHTML = `<span class="chip"><i class="lg-free"></i>${n("free")} free</span><span class="chip"><i class="lg-held"></i>${n("held")} held</span><span class="chip"><i class="lg-sold"></i>${n("confirmed")} booked</span>` + (r.body.truncated ? `<span class="chip">showing the first ${items.length}</span>` : "");
     renderSeatMap($("#inv-map", el), items);
     $("#inv-map", el).onclick = (e) => {
       const b = e.target.closest(".seat"); if (!b) return;
@@ -419,7 +526,7 @@ function renderBookPanel(el, items) {
   const log = b.log.slice(-4).map((l) => `<div class="note ${l.kind}">${l.text}</div>`).join("");
   if (b.hold) {
     const dl = b.hold.deadline;
-    setHTML(panel, `<h2>Your hold</h2><div class="chips">${b.hold.items.map((i) => `<span class="chip">Seat ${i.seq}</span>`).join("")}</div>
+    setHTML(panel, `<h2>Your hold</h2><div class="chips">${b.hold.items.map((i) => `<span class="chip acc">Seat ${i.seq}</span>`).join("")}</div>
       <div class="countdown" data-dl="${dl}">${secs(dl - performance.now())}s</div><div class="muted small">left on your ${term("hold", "hold")} (a soft limit: if nobody takes your seats, paying late still works)</div>
       <div class="kv" style="margin-top:8px"><div>${term("version", "Version")}</div><div>${b.hold.items.map((i) => i.version).join(", ")}</div><div>Request id</div><div class="mono">${esc(b.hold.requestId)}</div></div>
       <div class="btn-row"><button class="btn btn-primary" id="bk-pay" ${b.busy ? "disabled" : ""}>Pay (simulated)</button><button class="btn" id="bk-rel" ${b.busy ? "disabled" : ""}>Release</button><button class="btn btn-ghost" id="bk-retry" title="Sends exactly the same hold request again, as a client would after a lost reply. You get the same hold back, not a second one.">Retry the hold request</button></div>
@@ -428,7 +535,7 @@ function renderBookPanel(el, items) {
     return;
   }
   const n = b.picked.size;
-  if (!setHTML(panel, `<h2>Your selection</h2>${n ? `<div class="chips">${[...b.picked].map((id) => `<span class="chip">Seat ${seq(id)}</span>`).join("")}</div>` : `<p class="muted">Click free seats on the map (up to six).</p>`}
+  if (!setHTML(panel, `<h2>Your selection</h2>${n ? `<div class="chips">${[...b.picked].map((id) => `<span class="chip acc">Seat ${seq(id)}</span>`).join("")}</div>` : `<p class="muted">Click free seats on the map (up to six).</p>`}
     <label class="f">Buyer id<input type="text" id="bk-buyer" value="${esc(state.buyer)}" size="20" title="Who you are. Two browsers with different ids compete for the same seats."></label>
     <div class="btn-row"><button class="btn btn-primary" id="bk-hold" ${n && !b.busy ? "" : "disabled"}>Hold ${n || ""} seat${n === 1 ? "" : "s"}</button><button class="btn btn-ghost" id="bk-clear" ${n ? "" : "disabled"}>Clear</button></div>
     <div class="muted small">${esc(b.status)}</div>${log}`)) return; // nothing changed: keep what the buyer is typing
