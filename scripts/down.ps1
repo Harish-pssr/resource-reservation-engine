@@ -8,9 +8,9 @@ $ErrorActionPreference = 'Continue'
 Set-Location (Join-Path $PSScriptRoot '..')
 
 # 1. The restart loops first, otherwise they would start the servers again as soon as we stop them.
-#    Only shells running the project's loop scripts are matched, and never this script itself.
+#    Only a shell running up.ps1 in its internal server-loop mode is matched, and never this script itself.
 $loops = Get-CimInstance Win32_Process | Where-Object {
-    $_.ProcessId -ne $PID -and $_.Name -match '^(bash|powershell|pwsh)(\.exe)?$' -and $_.CommandLine -match 'dev-api|dev-ui|run-api'
+    $_.ProcessId -ne $PID -and $_.Name -match '^(bash|powershell|pwsh)(\.exe)?$' -and $_.CommandLine -match 'up\.ps1.*-RunApiLoop'
 }
 foreach ($p in $loops) { Stop-Process -Id $p.ProcessId -Force -ErrorAction SilentlyContinue }
 Write-Host "restart loops stopped: $(@($loops).Count)"

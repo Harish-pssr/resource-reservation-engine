@@ -11,7 +11,7 @@ clean=false; [ "${1:-}" = "--clean" ] && clean=true
 # 1. The restart loops first, otherwise they would start the servers again as soon as we stop them.
 #    pgrep -f also matches this script's own shell, so its own pid is excluded.
 loops=0
-for pat in 'scripts/dev-api' 'dev-ui' 'run-api'; do
+for pat in 'scripts/up.sh --run-api-loop'; do
   for pid in $(pgrep -f "$pat" 2>/dev/null | grep -vx "$$"); do kill "$pid" 2>/dev/null && loops=$((loops + 1)); done
 done
 echo "restart loops stopped: $loops"

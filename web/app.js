@@ -545,14 +545,14 @@ views.failures = {
   render: () => `<div id="fl-gate"></div><div class="grid g2"><div class="card"><h2>Guided demos</h2>
       <p>Each demo does the whole thing for you: it arms a crash, drives a request, watches the server die, waits for it to come back, retries like a client would, and explains what it sees.</p>
       <div class="btn-row"><button class="btn btn-primary" id="fl-d9">Killed before the hold reply</button><button class="btn btn-primary" id="fl-d17">Killed before the booking reply</button></div>
-      <p class="muted small">They need the server to restart by itself (run it with <span class="mono">scripts/dev-api</span>).</p><div id="fl-log"></div></div>
+      <p class="muted small">They need the server to restart by itself (<span class="mono">scripts/up</span> starts it that way).</p><div id="fl-log"></div></div>
     <div class="card" id="fl-armed"></div></div><div class="card" id="fl-table"></div>`,
   async refresh(el) {
     const h = await api("/healthz");
     const f = state.token ? await api("/admin/faults", { admin: true }) : { status: 0, body: null };
     const b = h.body || {};
     let gate = "";
-    if (!b.faults_enabled) gate = `<div class="note warn">Fault injection is off on this server. Start it with <span class="mono">FAULTS_ENABLED=true ADMIN_TOKEN=&lt;token&gt;</span>, ideally under <span class="mono">scripts/dev-api</span> so it restarts after a crash.</div>`;
+    if (!b.faults_enabled) gate = `<div class="note warn">Fault injection is off on this server. Start it with <span class="mono">FAULTS_ENABLED=true ADMIN_TOKEN=&lt;token&gt;</span>, or simply use <span class="mono">scripts/up</span>, which turns it on and restarts the server after a crash.</div>`;
     else if (!state.token) gate = `<div class="note warn">Enter the admin token in the top bar.</div>`;
     else if (f.status === 401) gate = `<div class="note warn">The admin token was refused.</div>`;
     setHTML($("#fl-gate", el), gate);
@@ -603,7 +603,7 @@ async function demo(el, point) {
     if (first.status !== 0) return;
     say("", "Waiting for the server to come back…");
     let up = false; for (let i = 0; i < 60 && !up; i++) { await sleep(500); up = (await api("/healthz")).status > 0; }
-    if (!up) { say("bad", "The server did not come back within 30 s. Start it again by hand (or run it under scripts/dev-api)."); return; }
+    if (!up) { say("bad", "The server did not come back within 30 s. Run scripts/up again: it starts the server, and restarts it after a crash by itself."); return; }
     say("", "The server is back. The client retries the very same request:");
     if (point === "hold.before_reply") {
       const again = await hold(), v = again.body?.items?.[0]?.hold_version;
@@ -652,7 +652,7 @@ async function checkApi() {
   const h = await api("/healthz");
   const was = state.apiUp; state.apiUp = h.status > 0; state.health = h.body || state.health;
   const pill = $("#api-pill"), text = $("#api-pill-text");
-  if (!state.apiUp) { pill.className = "pill pill-bad"; text.textContent = "API not answering"; banner("The API is not answering. If you armed a crash, it exited on purpose: restart it (<span class='mono'>scripts/dev-api</span> does that automatically).", true); }
+  if (!state.apiUp) { pill.className = "pill pill-bad"; text.textContent = "API not answering"; banner("The API is not answering. If you armed a crash, it exited on purpose: run <span class='mono'>scripts/up</span> again (it normally restarts the server by itself).", true); }
   else {
     const pg = h.body?.postgres === "ok";
     pill.className = "pill " + (pg ? "pill-ok" : "pill-bad"); text.textContent = pg ? "API and Postgres healthy" : "Postgres is not answering";
