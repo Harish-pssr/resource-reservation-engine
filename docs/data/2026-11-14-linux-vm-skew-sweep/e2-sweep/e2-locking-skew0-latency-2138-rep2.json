@@ -1,0 +1,713 @@
+{
+  "params": {
+    "experiment": "e2",
+    "strategy": "locking",
+    "api_strategy": "locking",
+    "schema": "protected",
+    "run": 0,
+    "items": 250146,
+    "buyers": 64140,
+    "arrival_window_s": 30,
+    "skew_zipf_exponent": 0,
+    "seed": 280081,
+    "payment_profile": "realistic",
+    "payment": {
+      "delay_min_ms": 2000,
+      "delay_max_ms": 10000,
+      "fail_pct": 10,
+      "timeout_pct": 2,
+      "timeout_ms": 15000
+    },
+    "hold_ttl": "300s",
+    "db_pool_size": 32,
+    "generator_max_inflight": 20000,
+    "client_retry_policy": "lock_busy only, max 3 retries, base 20ms x2 full jitter, cap 200ms",
+    "scope": "simulated payment and simulated demand; API, database and load generator share one machine unless the environment says otherwise",
+    "phase": "latency",
+    "label": "locking-skew0-latency-2138-rep2"
+  },
+  "environment": {
+    "captured_at": "2026-11-14T17:51:43Z",
+    "os": "linux",
+    "arch": "amd64",
+    "num_cpu": 4,
+    "cpu_model": "Intel(R) Xeon(R) CPU @ 2.80GHz",
+    "mem_total_mb": 64293,
+    "power_state": "no-battery",
+    "go_version": "go1.27.0",
+    "git_commit": "cfbf836",
+    "git_dirty": false,
+    "logical_cpus": 16,
+    "kernel": "7.0.0-1017-gcp",
+    "machine_type": "n2-standard-16",
+    "backend_profile": "full",
+    "pinning": "postgres=0-2,8-10 api=3-4,11-12 bench=5-6,13-14 redis=7 spare=15",
+    "allowed_cpus": "5-6,13-14",
+    "cpu_steal_pct": 0
+  },
+  "store_settings": {
+    "postgres_version": "PostgreSQL 16.16 (Debian 16.16-1.pgdg13+1) on x86_64-pc-linux-gnu, compiled by gcc (Debian 14.2.0-19) 14.2.0, 64-bit",
+    "postgres_settings": {
+      "checkpoint_timeout": "300s",
+      "deadlock_timeout": "1000ms",
+      "default_transaction_isolation": "read committed",
+      "effective_cache_size": "5242888kB",
+      "fsync": "on",
+      "full_page_writes": "on",
+      "max_connections": "300",
+      "max_wal_size": "1024MB",
+      "shared_buffers": "163848kB",
+      "synchronous_commit": "on",
+      "wal_level": "replica",
+      "work_mem": "4096kB"
+    },
+    "redis_version": "7.4.12",
+    "redis_persistence": "none"
+  },
+  "started_at": "2026-11-14T18:01:32Z",
+  "wall_s": 45.601243249,
+  "client_summary": {
+    "run": "locking-r0",
+    "target_rate": 2138,
+    "arrival_window_s": 30,
+    "wall_s": 45.130342253,
+    "planned": 64140,
+    "sent": 64140,
+    "skipped": 0,
+    "max_inflight": 10780,
+    "schedule_lag_p50_ms": 0.5614809999999999,
+    "schedule_lag_p99_ms": 1.6479893,
+    "schedule_lag_max_ms": 6.370203,
+    "generator_kept_up": true,
+    "room_used": false,
+    "room_admitted": 0,
+    "room_turned_away": 0,
+    "room_gave_up": 0,
+    "room_errors": 0,
+    "queue_wait_p50_ms": 0,
+    "queue_wait_p99_ms": 0,
+    "queue_wait_max_ms": 0,
+    "fifo_inversions": 0,
+    "admitted_via_queue": 0,
+    "hold_held": 42660,
+    "hold_unavailable": 21480,
+    "hold_lock_busy_after_retries": 0,
+    "hold_not_admitted": 0,
+    "hold_errors": 0,
+    "retries": 6,
+    "confirmed": 37531,
+    "confirmed_items": 91196,
+    "confirmed_after_expiry": 0,
+    "confirm_replayed": 0,
+    "hold_lost": 0,
+    "payment_failed": 4269,
+    "payment_timeout": 860,
+    "payment_in_progress": 0,
+    "confirm_errors": 0,
+    "hold_p50_ms": 2.431111,
+    "hold_p95_ms": 3.7040374,
+    "hold_p99_ms": 4.755878360000003,
+    "hold_max_ms": 135.305813,
+    "store_hold_p50_ms": 1.9624234999999999,
+    "store_hold_p99_ms": 3.8214303000000016,
+    "confirm_p50_ms": 6122.531554499999,
+    "confirm_p99_ms": 15004.05185953,
+    "bookings_per_s_arrival_window": 1251.0333333333333,
+    "bookings_per_s_wall": 831.6134584045872
+  },
+  "server_metrics": {
+    "api": {
+      "counters": {
+        "requests{POST /events,201}": 1,
+        "requests{POST /holds,201}": 42660,
+        "requests{POST /holds,409}": 21480,
+        "requests{POST /holds,503}": 6,
+        "requests{POST /holds/confirm,200}": 37531,
+        "requests{POST /holds/confirm,402}": 5129
+      },
+      "histograms": {
+        "latency{POST /events}": {
+          "count": 1,
+          "mean_ms": 2609.108538,
+          "p50_ms_upper_bound": 5000,
+          "p99_ms_upper_bound": 5000,
+          "buckets_ms": {
+            "\u003c=5000": 1
+          }
+        },
+        "latency{POST /holds/confirm}": {
+          "count": 42660,
+          "mean_ms": 6202.52510259707,
+          "p50_ms_upper_bound": 10000,
+          "p99_ms_upper_bound": -1,
+          "buckets_ms": {
+            "\u003c=10000": 26275,
+            "\u003c=5000": 15511,
+            "\u003c=inf": 874
+          }
+        },
+        "latency{POST /holds}": {
+          "count": 64146,
+          "mean_ms": 1.7704579403236367,
+          "p50_ms_upper_bound": 2,
+          "p99_ms_upper_bound": 5,
+          "buckets_ms": {
+            "\u003c=1": 19077,
+            "\u003c=10": 53,
+            "\u003c=100": 35,
+            "\u003c=2": 29105,
+            "\u003c=20": 98,
+            "\u003c=200": 65,
+            "\u003c=5": 15643,
+            "\u003c=50": 70
+          }
+        }
+      }
+    },
+    "faults_enabled": false,
+    "inflight": 0,
+    "max_inflight": 10778,
+    "outcomes": {
+      "confirm_replayed": 0,
+      "confirmed_after_expiry": 0,
+      "confirmed_in_time": 37531,
+      "max_concurrent_payments_per_hold": 1,
+      "paid_but_lost": 0,
+      "payment_attempts": 42660,
+      "payment_failed": 4269,
+      "payment_in_progress_replies": 0,
+      "payment_timed_out": 860
+    },
+    "strategy": {
+      "db_pool_acquire_wait_ms_total": 25299,
+      "db_pool_acquired_conns": 0,
+      "db_pool_acquires_that_waited": 712,
+      "db_pool_acquires_total": 149471,
+      "db_pool_idle_conns": 32,
+      "db_pool_max_conns": 32,
+      "lock_busy": 6
+    }
+  },
+  "store_load": {
+    "samples": 45,
+    "max_connections": 33,
+    "max_active": 9,
+    "max_waiting_on_lock": 0,
+    "deadlocks_during_run": 0,
+    "rollbacks_during_run": 21486,
+    "commits_during_run": 127771,
+    "host_cpu_mean_percent": 31.40555750346344,
+    "host_cpu_max_percent": 51.739986868023635
+  },
+  "store_load_samples": [
+    {
+      "t_s": 1.000312939,
+      "connections": 33,
+      "active": 8,
+      "waiting_on_lock": 0,
+      "commits": 1950080,
+      "rollbacks": 533250,
+      "deadlocks": 307,
+      "host_cpu_percent": 40.10282776349614
+    },
+    {
+      "t_s": 2.000368092,
+      "connections": 33,
+      "active": 4,
+      "waiting_on_lock": 0,
+      "commits": 1953000,
+      "rollbacks": 533281,
+      "deadlocks": 307,
+      "host_cpu_percent": 40.31007751937985
+    },
+    {
+      "t_s": 3.000351308,
+      "connections": 33,
+      "active": 1,
+      "waiting_on_lock": 0,
+      "commits": 1956434,
+      "rollbacks": 533361,
+      "deadlocks": 307,
+      "host_cpu_percent": 40.67140090380891
+    },
+    {
+      "t_s": 4.000860759,
+      "connections": 33,
+      "active": 5,
+      "waiting_on_lock": 0,
+      "commits": 1960700,
+      "rollbacks": 533545,
+      "deadlocks": 307,
+      "host_cpu_percent": 42.5974025974026
+    },
+    {
+      "t_s": 5.000872242,
+      "connections": 33,
+      "active": 6,
+      "waiting_on_lock": 0,
+      "commits": 1965196,
+      "rollbacks": 533763,
+      "deadlocks": 307,
+      "host_cpu_percent": 44.516971279373365
+    },
+    {
+      "t_s": 6.000724565,
+      "connections": 33,
+      "active": 6,
+      "waiting_on_lock": 0,
+      "commits": 1970940,
+      "rollbacks": 534089,
+      "deadlocks": 307,
+      "host_cpu_percent": 47.73770491803278
+    },
+    {
+      "t_s": 7.000793763,
+      "connections": 33,
+      "active": 3,
+      "waiting_on_lock": 0,
+      "commits": 1975895,
+      "rollbacks": 534498,
+      "deadlocks": 307,
+      "host_cpu_percent": 46.17396991497711
+    },
+    {
+      "t_s": 8.000363602,
+      "connections": 33,
+      "active": 4,
+      "waiting_on_lock": 0,
+      "commits": 1980807,
+      "rollbacks": 534964,
+      "deadlocks": 307,
+      "host_cpu_percent": 49.57654723127036
+    },
+    {
+      "t_s": 9.00032987,
+      "connections": 33,
+      "active": 3,
+      "waiting_on_lock": 0,
+      "commits": 1985358,
+      "rollbacks": 535443,
+      "deadlocks": 307,
+      "host_cpu_percent": 47.2240365774004
+    },
+    {
+      "t_s": 10.000427185,
+      "connections": 33,
+      "active": 7,
+      "waiting_on_lock": 0,
+      "commits": 1991154,
+      "rollbacks": 536065,
+      "deadlocks": 307,
+      "host_cpu_percent": 49.570389953734306
+    },
+    {
+      "t_s": 11.00031427,
+      "connections": 33,
+      "active": 3,
+      "waiting_on_lock": 0,
+      "commits": 1995568,
+      "rollbacks": 536583,
+      "deadlocks": 307,
+      "host_cpu_percent": 50.85190039318479
+    },
+    {
+      "t_s": 12.000450124,
+      "connections": 33,
+      "active": 6,
+      "waiting_on_lock": 0,
+      "commits": 2000135,
+      "rollbacks": 537197,
+      "deadlocks": 307,
+      "host_cpu_percent": 51.277013752455794
+    },
+    {
+      "t_s": 13.000398875,
+      "connections": 33,
+      "active": 5,
+      "waiting_on_lock": 0,
+      "commits": 2004883,
+      "rollbacks": 537850,
+      "deadlocks": 307,
+      "host_cpu_percent": 51.739986868023635
+    },
+    {
+      "t_s": 14.000558603,
+      "connections": 33,
+      "active": 6,
+      "waiting_on_lock": 0,
+      "commits": 2009087,
+      "rollbacks": 538472,
+      "deadlocks": 307,
+      "host_cpu_percent": 46.41683103221565
+    },
+    {
+      "t_s": 15.000389482,
+      "connections": 33,
+      "active": 4,
+      "waiting_on_lock": 0,
+      "commits": 2013308,
+      "rollbacks": 539181,
+      "deadlocks": 307,
+      "host_cpu_percent": 45.52580013063358
+    },
+    {
+      "t_s": 16.001342422,
+      "connections": 33,
+      "active": 6,
+      "waiting_on_lock": 0,
+      "commits": 2017825,
+      "rollbacks": 540003,
+      "deadlocks": 307,
+      "host_cpu_percent": 44.83660130718954
+    },
+    {
+      "t_s": 17.000653328,
+      "connections": 33,
+      "active": 6,
+      "waiting_on_lock": 0,
+      "commits": 2021560,
+      "rollbacks": 540665,
+      "deadlocks": 307,
+      "host_cpu_percent": 45.65075212557227
+    },
+    {
+      "t_s": 18.001307399,
+      "connections": 33,
+      "active": 2,
+      "waiting_on_lock": 0,
+      "commits": 2025391,
+      "rollbacks": 541515,
+      "deadlocks": 307,
+      "host_cpu_percent": 42.31523871811642
+    },
+    {
+      "t_s": 19.001093031,
+      "connections": 33,
+      "active": 6,
+      "waiting_on_lock": 0,
+      "commits": 2029557,
+      "rollbacks": 542397,
+      "deadlocks": 307,
+      "host_cpu_percent": 42.1395955642531
+    },
+    {
+      "t_s": 20.000453723,
+      "connections": 33,
+      "active": 4,
+      "waiting_on_lock": 0,
+      "commits": 2034046,
+      "rollbacks": 543402,
+      "deadlocks": 307,
+      "host_cpu_percent": 41.56785243741765
+    },
+    {
+      "t_s": 21.000608385,
+      "connections": 33,
+      "active": 5,
+      "waiting_on_lock": 0,
+      "commits": 2037947,
+      "rollbacks": 544363,
+      "deadlocks": 307,
+      "host_cpu_percent": 41.63934426229508
+    },
+    {
+      "t_s": 22.000372829,
+      "connections": 33,
+      "active": 4,
+      "waiting_on_lock": 0,
+      "commits": 2042468,
+      "rollbacks": 545501,
+      "deadlocks": 307,
+      "host_cpu_percent": 43.90879478827362
+    },
+    {
+      "t_s": 23.001324307,
+      "connections": 33,
+      "active": 5,
+      "waiting_on_lock": 0,
+      "commits": 2046169,
+      "rollbacks": 546516,
+      "deadlocks": 307,
+      "host_cpu_percent": 40.3921568627451
+    },
+    {
+      "t_s": 24.000342237,
+      "connections": 33,
+      "active": 5,
+      "waiting_on_lock": 0,
+      "commits": 2049380,
+      "rollbacks": 547399,
+      "deadlocks": 307,
+      "host_cpu_percent": 41.30998702983138
+    },
+    {
+      "t_s": 25.000857601,
+      "connections": 33,
+      "active": 6,
+      "waiting_on_lock": 0,
+      "commits": 2052849,
+      "rollbacks": 548425,
+      "deadlocks": 307,
+      "host_cpu_percent": 38.736979166666664
+    },
+    {
+      "t_s": 26.00032576,
+      "connections": 33,
+      "active": 9,
+      "waiting_on_lock": 0,
+      "commits": 2056372,
+      "rollbacks": 549465,
+      "deadlocks": 307,
+      "host_cpu_percent": 44.010416666666664
+    },
+    {
+      "t_s": 27.000318949,
+      "connections": 33,
+      "active": 2,
+      "waiting_on_lock": 0,
+      "commits": 2059647,
+      "rollbacks": 550522,
+      "deadlocks": 307,
+      "host_cpu_percent": 43.70561652679148
+    },
+    {
+      "t_s": 28.000501157,
+      "connections": 33,
+      "active": 5,
+      "waiting_on_lock": 0,
+      "commits": 2063154,
+      "rollbacks": 551677,
+      "deadlocks": 307,
+      "host_cpu_percent": 39.88250652741514
+    },
+    {
+      "t_s": 29.000766151,
+      "connections": 33,
+      "active": 3,
+      "waiting_on_lock": 0,
+      "commits": 2066398,
+      "rollbacks": 552787,
+      "deadlocks": 307,
+      "host_cpu_percent": 42.58064516129032
+    },
+    {
+      "t_s": 30.001090889,
+      "connections": 33,
+      "active": 2,
+      "waiting_on_lock": 0,
+      "commits": 2068569,
+      "rollbacks": 553618,
+      "deadlocks": 307,
+      "host_cpu_percent": 37.28155339805825
+    },
+    {
+      "t_s": 31.001134699,
+      "connections": 33,
+      "active": 2,
+      "waiting_on_lock": 0,
+      "commits": 2070687,
+      "rollbacks": 554357,
+      "deadlocks": 307,
+      "host_cpu_percent": 13.541004450095361
+    },
+    {
+      "t_s": 32.000828843,
+      "connections": 33,
+      "active": 4,
+      "waiting_on_lock": 0,
+      "commits": 2071684,
+      "rollbacks": 554375,
+      "deadlocks": 307,
+      "host_cpu_percent": 16.25553447185326
+    },
+    {
+      "t_s": 33.000401542,
+      "connections": 33,
+      "active": 4,
+      "waiting_on_lock": 0,
+      "commits": 2072793,
+      "rollbacks": 554375,
+      "deadlocks": 307,
+      "host_cpu_percent": 10.829639012032931
+    },
+    {
+      "t_s": 34.000941258,
+      "connections": 33,
+      "active": 3,
+      "waiting_on_lock": 0,
+      "commits": 2073736,
+      "rollbacks": 554375,
+      "deadlocks": 307,
+      "host_cpu_percent": 10.901071203528668
+    },
+    {
+      "t_s": 35.000493345,
+      "connections": 33,
+      "active": 1,
+      "waiting_on_lock": 0,
+      "commits": 2074694,
+      "rollbacks": 554375,
+      "deadlocks": 307,
+      "host_cpu_percent": 8.164556962025316
+    },
+    {
+      "t_s": 36.000373949,
+      "connections": 33,
+      "active": 1,
+      "waiting_on_lock": 0,
+      "commits": 2075495,
+      "rollbacks": 554375,
+      "deadlocks": 307,
+      "host_cpu_percent": 7.2692793931732
+    },
+    {
+      "t_s": 37.001073401,
+      "connections": 33,
+      "active": 1,
+      "waiting_on_lock": 0,
+      "commits": 2075904,
+      "rollbacks": 554375,
+      "deadlocks": 307,
+      "host_cpu_percent": 5.220125786163521
+    },
+    {
+      "t_s": 38.000382856,
+      "connections": 33,
+      "active": 1,
+      "waiting_on_lock": 0,
+      "commits": 2076297,
+      "rollbacks": 554375,
+      "deadlocks": 307,
+      "host_cpu_percent": 4.7288776796973515
+    },
+    {
+      "t_s": 39.001095284,
+      "connections": 33,
+      "active": 1,
+      "waiting_on_lock": 0,
+      "commits": 2076543,
+      "rollbacks": 554375,
+      "deadlocks": 307,
+      "host_cpu_percent": 2.946708463949843
+    },
+    {
+      "t_s": 40.000351072,
+      "connections": 33,
+      "active": 1,
+      "waiting_on_lock": 0,
+      "commits": 2077494,
+      "rollbacks": 554708,
+      "deadlocks": 307,
+      "host_cpu_percent": 1.9447929736511882
+    },
+    {
+      "t_s": 41.000392332,
+      "connections": 33,
+      "active": 1,
+      "waiting_on_lock": 0,
+      "commits": 2077656,
+      "rollbacks": 554736,
+      "deadlocks": 307,
+      "host_cpu_percent": 0.5628517823639823
+    },
+    {
+      "t_s": 42.001179123,
+      "connections": 33,
+      "active": 1,
+      "waiting_on_lock": 0,
+      "commits": 2077686,
+      "rollbacks": 554736,
+      "deadlocks": 307,
+      "host_cpu_percent": 1.1249999999999982
+    },
+    {
+      "t_s": 43.00134346,
+      "connections": 33,
+      "active": 1,
+      "waiting_on_lock": 0,
+      "commits": 2077803,
+      "rollbacks": 554736,
+      "deadlocks": 307,
+      "host_cpu_percent": 4.00751408891672
+    },
+    {
+      "t_s": 44.001260897,
+      "connections": 33,
+      "active": 1,
+      "waiting_on_lock": 0,
+      "commits": 2077837,
+      "rollbacks": 554736,
+      "deadlocks": 307,
+      "host_cpu_percent": 0.9386733416770987
+    },
+    {
+      "t_s": 45.00109464,
+      "connections": 33,
+      "active": 1,
+      "waiting_on_lock": 0,
+      "commits": 2077851,
+      "rollbacks": 554736,
+      "deadlocks": 307,
+      "host_cpu_percent": 0.5635566687539173
+    }
+  ],
+  "checker": {
+    "double_sold_items": 0,
+    "extra_bookings": 0,
+    "oversold": 0,
+    "stuck_holds": 0,
+    "confirmed_items_without_booking": 0,
+    "bookings_on_unconfirmed_items": 0,
+    "confirmed_bookings": 91196,
+    "total_capacity": 250146
+  },
+  "reconcile": {
+    "client_confirmed_buyers": 37531,
+    "client_confirmed_items": 91196,
+    "db_bookings": 91196,
+    "matched_buyers": 37531,
+    "unknown_outcome_booked": 0,
+    "unknown_outcome_not_booked": 0,
+    "violation_confirmed_but_missing": 0,
+    "violation_unexplained_bookings": 0,
+    "violation_unknown_outcome_partial": 0
+  },
+  "sustain": {
+    "sustained": true
+  },
+  "verdict": "all invariants held",
+  "part_cpu": {
+    "api": {
+      "pinned_vcpus": 4,
+      "mean_cores_busy": 1.1055361472543037,
+      "max_cores_busy": 1.9199865600940793,
+      "mean_pct_of_pinned": 27.638403681357595,
+      "max_pct_of_pinned": 47.999664002351984,
+      "samples": 45
+    },
+    "bench": {
+      "pinned_vcpus": 4,
+      "mean_cores_busy": 0.5682122469405537,
+      "max_cores_busy": 1.2598639346950529,
+      "mean_pct_of_pinned": 14.205306173513844,
+      "max_pct_of_pinned": 31.496598367376322,
+      "samples": 45
+    },
+    "postgres": {
+      "pinned_vcpus": 6,
+      "mean_cores_busy": 2.1618030483464845,
+      "max_cores_busy": 3.736795474476934,
+      "mean_pct_of_pinned": 36.03005080577474,
+      "max_pct_of_pinned": 62.27992457461556,
+      "samples": 45
+    },
+    "redis": {
+      "pinned_vcpus": 1,
+      "mean_cores_busy": 0.01653635413956066,
+      "max_cores_busy": 0.035369331110268735,
+      "mean_pct_of_pinned": 1.653635413956066,
+      "max_pct_of_pinned": 3.5369331110268734,
+      "samples": 45
+    }
+  }
+}
