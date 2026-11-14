@@ -41,12 +41,26 @@ async function api(path, opts = {}) {
   }
 }
 
+// One toast per message: pressing the same thing again restarts the existing one instead of stacking another.
 function toast(msg, kind) {
-  const t = document.createElement("div");
-  t.className = "toast " + (kind || "");
-  t.textContent = msg;
-  $("#toasts").append(t);
-  setTimeout(() => t.remove(), 4500);
+  const box = $("#toasts");
+  let t = [...box.children].find((x) => x.textContent === msg);
+  if (t) { clearTimeout(t._timer); t.classList.remove("again"); void t.offsetWidth; t.classList.add("again"); }
+  else {
+    t = document.createElement("div");
+    t.className = "toast " + (kind || "");
+    t.textContent = msg;
+    box.append(t);
+    while (box.children.length > 3) box.firstElementChild.remove();
+  }
+  t._timer = setTimeout(() => t.remove(), 4500);
+}
+
+// The admin pages need a token: say so in the side toast and point at the box, instead of a note inside the page.
+function needToken(msg) {
+  toast(msg || "Enter the admin token in the top bar to use this page", "bad");
+  const i = $("#admin-token"); if (!i) return;
+  i.focus(); i.classList.add("attn"); setTimeout(() => i.classList.remove("attn"), 1800);
 }
 
 function banner(html, bad) {
@@ -132,11 +146,12 @@ const legend = (mine) => `<div class="legend"><span><i class="lg-free"></i>Free<
 async function loadEvents() {
   const r = await api("/events");
   const list = r.body?.events || [];
+  state.eventList = list;
   if (!state.eventId || !list.some((e) => e.id === state.eventId)) state.eventId = list[0]?.id || null;
   return list;
 }
 function eventSelect(list) {
-  if (!list.length) return `<span class="muted">No events yet. Create one below.</span>`;
+  if (!list.length) return `<span class="muted">No events yet. <a href="#/events">Create one</a> first.</span>`;
   return `<label class="f">Event<select id="ev-select">${list.map((e) => `<option value="${e.id}" ${e.id === state.eventId ? "selected" : ""}>#${e.id} ${esc(e.name)} (${e.free} free of ${e.capacity})</option>`).join("")}</select></label>`;
 }
 function bindEventSelect(el, after) {
@@ -144,10 +159,10 @@ function bindEventSelect(el, after) {
   if (s) s.onchange = () => { state.eventId = Number(s.value); localStorage.setItem("eventId", state.eventId); state.book.picked.clear(); after(); };
 }
 function createEventForm() {
-  return `<div class="card"><h2>Create an event</h2><p class="muted small">An event is a set of numbered seats, one row in the database each.</p>
-    <div class="row"><label class="f">Name<input type="text" id="ce-name" value="Demo show" size="18"></label>
+  return `<div class="card"><h2>New event</h2><p class="muted small">An event is a set of numbered seats, one row in the database each. The new event becomes the one the other pages show.</p>
+    <div class="row"><label class="f">Name<input type="text" id="ce-name" value="Demo show" size="22"></label>
     <label class="f">Seats<input type="number" id="ce-n" value="60" min="1" max="2000" style="width:90px"></label>
-    <button class="btn btn-primary" id="ce-go">Create</button></div></div>`;
+    <button class="btn btn-primary" id="ce-go">Create event</button></div></div>`;
 }
 function bindCreateEvent(el, after) {
   const go = $("#ce-go", el);
@@ -215,61 +230,60 @@ views.start = {
       <p class="muted">Built with Go, PostgreSQL, Redis and Docker Compose. The payment and the demand are simulated, so every claim holds "with a simulated payment and simulated demand".</p></div></div>
 
     <div class="card flow" id="st-flow">
-      <div class="card-head"><h2>How a booking flows</h2>
+      <div class="card-head head-left"><h2>How a booking flows</h2>
         <label class="switch switch-chip" title="Mark where the system can fail, and how it recovers"><input type="checkbox" id="st-fail"><span class="switch-track"></span><span class="switch-label">Show failure points</span></label></div>
       <p class="muted flow-hint">Hover a number to see what happens at that step. Switch on <strong>Show failure points</strong> to see where it can fail and what is left behind.</p>
-      <div class="key"><span><i></i>Service</span><span><i class="k-store"></i>Database (system of record)</span><span><i class="k-hint"></i>Redis (a hint, never the decider)</span><span><i class="k-ext"></i>Simulated outside service</span><span><i class="k-ctl"></i>Off by default</span><span><span class="dash"></span>Background or verification</span></div>
       <div class="flow-stage" id="st-stage"><div class="flow-scroll">
         <svg class="flow-svg" viewBox="0 0 1200 500" role="group" aria-label="Diagram: a buyer joins the waiting room, places a hold through the API, a strategy asks Redis and then Postgres, the API takes a simulated payment, and a checker verifies the database.">
           <defs><marker id="flow-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path class="arrowhead" d="M0,0 L10,5 L0,10 z"/></marker></defs>
-          <rect class="zone" x="135" y="14" width="850" height="474" rx="14"/><text class="zone-label" x="152" y="34">Your service</text>
-          <rect class="zone" x="1005" y="14" width="185" height="270" rx="14"/><text class="zone-label" x="1022" y="34">Outside (simulated)</text>
+          <rect class="zone" x="140" y="14" width="865" height="474" rx="14"/><text class="zone-label" x="156" y="34">Your service</text>
+          <rect class="zone" x="1020" y="14" width="170" height="250" rx="14"/><text class="zone-label" x="1036" y="34">Outside (simulated)</text>
 
-          <path class="ar" d="M110,230 H158"/><path class="ar" d="M300,230 H338"/><path class="ar" d="M490,230 H528"/><path class="ar" d="M720,230 H778"/>
-          <path class="ar" d="M230,290 V420 H328"/><path class="ar" d="M625,330 V420 H532"/>
-          <path class="ar" d="M470,150 V45 H990 V135 H1013"/>
-          <path class="ar dashed" d="M400,112 V148"/><path class="ar dashed" d="M840,339 V388"/>
+          <path class="ar" d="M110,230 H168"/><path class="ar" d="M310,230 H368"/><path class="ar" d="M520,230 H588"/><path class="ar" d="M780,230 H848"/>
+          <path class="ar" d="M240,292 V410 H358"/><path class="ar" d="M685,320 V410 H562"/>
+          <path class="ar" d="M500,150 V45 H1012 V125 H1030"/>
+          <path class="ar dashed" d="M430,116 V148"/><path class="ar dashed" d="M910,309 V378"/>
 
-          <g class="fn"><rect x="10" y="200" width="100" height="60" rx="10"/><text x="60" y="222">Buyer</text><text class="t2" x="60" y="240">browser or load</text></g>
+          <g class="fn"><rect x="10" y="200" width="100" height="60" rx="10"/><text x="60" y="224">Buyer</text><text class="t2" x="60" y="242">browser</text></g>
 
-          <g class="fn"><rect class="grp" x="160" y="165" width="140" height="125" rx="12"/><text x="230" y="184">Waiting room</text>
-            <rect class="lane" x="172" y="198" width="116" height="38" rx="8"/><text x="230" y="211">FIFO queue</text><text class="t2" x="230" y="226">join, poll</text>
-            <rect class="lane" x="172" y="244" width="116" height="38" rx="8"/><text x="230" y="257">Pass</text><text class="t2" x="230" y="272">admit at rate R</text></g>
+          <g class="fn"><rect class="grp" x="170" y="168" width="140" height="124" rx="12"/><text x="240" y="186">Waiting room</text>
+            <rect class="lane" x="182" y="200" width="116" height="36" rx="8"/><text x="240" y="218">queue</text>
+            <rect class="lane" x="182" y="244" width="116" height="36" rx="8"/><text x="240" y="262">pass</text></g>
 
-          <g class="fn"><rect class="grp" x="340" y="150" width="150" height="160" rx="12"/><text x="415" y="169">API</text>
-            <rect class="lane" x="352" y="182" width="126" height="38" rx="8"/><text x="415" y="195">hold</text><text class="t2" x="415" y="210">POST /holds</text>
-            <rect class="lane" x="352" y="226" width="126" height="38" rx="8"/><text x="415" y="239">confirm and pay</text><text class="t2" x="415" y="254">POST /holds/confirm</text>
-            <rect class="lane" x="352" y="270" width="126" height="34" rx="8"/><text x="415" y="283">release</text><text class="t2" x="415" y="297">POST /holds/release</text></g>
+          <g class="fn"><rect class="grp" x="370" y="150" width="150" height="160" rx="12"/><text x="445" y="168">API</text>
+            <rect class="lane" x="382" y="182" width="126" height="34" rx="8"/><text x="445" y="199">hold</text>
+            <rect class="lane" x="382" y="224" width="126" height="34" rx="8"/><text x="445" y="241">confirm</text>
+            <rect class="lane" x="382" y="266" width="126" height="34" rx="8"/><text x="445" y="283">release</text></g>
 
-          <g class="fn"><rect class="grp" x="530" y="130" width="190" height="200" rx="12"/><text x="625" y="149">Reserve strategy</text>
-            <rect class="lane" x="542" y="164" width="166" height="44" rx="8"/><text x="625" y="180">Fast-path gate</text><text class="t2" x="625" y="196">asks Redis first</text>
-            <rect class="lane" x="542" y="216" width="166" height="44" rx="8"/><text x="625" y="232">Locking or optimistic</text><text class="t2" x="625" y="248">one short transaction</text>
-            <rect class="lane dashed" x="542" y="268" width="166" height="44" rx="8"/><text x="625" y="284">Naive</text><text class="t2" x="625" y="300">negative control only</text></g>
+          <g class="fn"><rect class="grp" x="590" y="140" width="190" height="180" rx="12"/><text x="685" y="158">Strategy</text>
+            <rect class="lane" x="602" y="172" width="166" height="40" rx="8"/><text x="685" y="192">Fast-path gate</text>
+            <rect class="lane" x="602" y="220" width="166" height="40" rx="8"/><text x="685" y="240">Locking or optimistic</text>
+            <rect class="lane dashed" x="602" y="268" width="166" height="40" rx="8"/><text x="685" y="288">Naive (control)</text></g>
 
-          <g class="fn"><path class="cyl" d="M780,190 a60,9 0 0 1 120,0 v140 a60,9 0 0 1 -120,0 z"/><path class="cyl-lip" d="M780,190 a60,9 0 0 0 120,0"/>
-            <text x="840" y="222">Postgres</text><text class="t2" x="840" y="242">system of record</text><text class="t2" x="840" y="262">a row per seat</text><text class="t2" x="840" y="278">one booking per seat</text><text class="t2" x="840" y="294">expiry by the clock</text></g>
+          <g class="fn"><path class="cyl" d="M850,182 a60,9 0 0 1 120,0 v118 a60,9 0 0 1 -120,0 z"/><path class="cyl-lip" d="M850,182 a60,9 0 0 0 120,0"/>
+            <text x="910" y="222">Postgres</text><text class="t2" x="910" y="242">system of record</text><text class="t2" x="910" y="260">seats and bookings</text></g>
 
-          <g class="fn"><path class="cyl hint" d="M330,385 a100,9 0 0 1 200,0 v70 a100,9 0 0 1 -200,0 z"/><path class="cyl-lip hint" d="M330,385 a100,9 0 0 0 200,0"/>
-            <text x="430" y="414">Redis</text><text class="t2" x="430" y="432">queue, passes, gate claims</text><text class="t2" x="430" y="448">a hint, never the decider</text></g>
+          <g class="fn"><path class="cyl hint" d="M360,378 a100,9 0 0 1 200,0 v62 a100,9 0 0 1 -200,0 z"/><path class="cyl-lip hint" d="M360,378 a100,9 0 0 0 200,0"/>
+            <text x="460" y="408">Redis</text><text class="t2" x="460" y="428">queue and gate, a hint</text></g>
 
-          <g class="fn"><rect x="770" y="390" width="140" height="56" rx="10"/><text x="840" y="410">Checker</text><text class="t2" x="840" y="428">reads only the database</text></g>
-          <g class="fn"><rect class="lane dashed ctl" x="340" y="72" width="120" height="40" rx="8"/><text x="400" y="86">Fault hooks</text><text class="t2" x="400" y="102">off by default</text></g>
-          <g class="fn"><rect class="ext" x="1015" y="70" width="160" height="150" rx="12"/><text x="1095" y="95">Payment</text><text class="t2" x="1095" y="118">simulated provider</text><text class="t2" x="1095" y="146">delay, failure, timeout</text><text class="t2" x="1095" y="180">keeps no memory of past</text><text class="t2" x="1095" y="196">calls: a retry may pay again</text></g>
+          <g class="fn"><rect x="850" y="380" width="120" height="52" rx="10"/><text x="910" y="402">Checker</text><text class="t2" x="910" y="420">reads the database</text></g>
+          <g class="fn"><rect class="lane dashed ctl" x="380" y="76" width="100" height="40" rx="8"/><text x="430" y="92">Fault hooks</text><text class="t2" x="430" y="107">off by default</text></g>
+          <g class="fn"><rect class="ext" x="1032" y="70" width="146" height="110" rx="12"/><text x="1105" y="96">Payment</text><text class="t2" x="1105" y="118">simulated</text><text class="t2" x="1105" y="146">delay, failure, timeout</text></g>
 
-          <g class="badge" data-tip="s1" tabindex="0" role="button" aria-label="Step 1"><circle cx="134" cy="230" r="11"/><text x="134" y="230">1</text></g>
-          <g class="badge" data-tip="s2" tabindex="0" role="button" aria-label="Step 2"><circle cx="319" cy="230" r="11"/><text x="319" y="230">2</text></g>
-          <g class="badge" data-tip="s3" tabindex="0" role="button" aria-label="Step 3"><circle cx="509" cy="230" r="11"/><text x="509" y="230">3</text></g>
-          <g class="badge" data-tip="s4" tabindex="0" role="button" aria-label="Step 4"><circle cx="625" cy="372" r="11"/><text x="625" y="372">4</text></g>
-          <g class="badge" data-tip="s5" tabindex="0" role="button" aria-label="Step 5"><circle cx="749" cy="230" r="11"/><text x="749" y="230">5</text></g>
-          <g class="badge" data-tip="s6" tabindex="0" role="button" aria-label="Step 6"><circle cx="730" cy="45" r="11"/><text x="730" y="45">6</text></g>
-          <g class="badge" data-tip="s7" tabindex="0" role="button" aria-label="Step 7"><circle cx="840" cy="364" r="11"/><text x="840" y="364">7</text></g>
+          <g class="badge" data-tip="s1" tabindex="0" role="button" aria-label="Step 1"><circle cx="139" cy="230" r="11"/><text x="139" y="230">1</text></g>
+          <g class="badge" data-tip="s2" tabindex="0" role="button" aria-label="Step 2"><circle cx="339" cy="230" r="11"/><text x="339" y="230">2</text></g>
+          <g class="badge" data-tip="s3" tabindex="0" role="button" aria-label="Step 3"><circle cx="554" cy="230" r="11"/><text x="554" y="230">3</text></g>
+          <g class="badge" data-tip="s4" tabindex="0" role="button" aria-label="Step 4"><circle cx="685" cy="365" r="11"/><text x="685" y="365">4</text></g>
+          <g class="badge" data-tip="s5" tabindex="0" role="button" aria-label="Step 5"><circle cx="814" cy="230" r="11"/><text x="814" y="230">5</text></g>
+          <g class="badge" data-tip="s6" tabindex="0" role="button" aria-label="Step 6"><circle cx="756" cy="45" r="11"/><text x="756" y="45">6</text></g>
+          <g class="badge" data-tip="s7" tabindex="0" role="button" aria-label="Step 7"><circle cx="910" cy="344" r="11"/><text x="910" y="344">7</text></g>
 
-          <g class="fail-mark" data-tip="fA" tabindex="0" role="button" aria-label="Failure point A"><circle cx="578" cy="420" r="11"/><text x="578" y="420">A</text></g>
-          <g class="fail-mark" data-tip="fB" tabindex="0" role="button" aria-label="Failure point B"><circle cx="905" cy="188" r="11"/><text x="905" y="188">B</text></g>
-          <g class="fail-mark" data-tip="fC" tabindex="0" role="button" aria-label="Failure point C"><circle cx="496" cy="176" r="11"/><text x="496" y="176">C</text></g>
-          <g class="fail-mark" data-tip="fD" tabindex="0" role="button" aria-label="Failure point D"><circle cx="890" cy="45" r="11"/><text x="890" y="45">D</text></g>
-          <g class="fail-mark" data-tip="fE" tabindex="0" role="button" aria-label="Failure point E"><circle cx="320" cy="384" r="11"/><text x="320" y="384">E</text></g>
-          <g class="fail-mark" data-tip="fF" tabindex="0" role="button" aria-label="Failure point F"><circle cx="772" cy="186" r="11"/><text x="772" y="186">F</text></g>
+          <g class="fail-mark" data-tip="fA" tabindex="0" role="button" aria-label="Failure point A"><circle cx="612" cy="410" r="11"/><text x="612" y="410">A</text></g>
+          <g class="fail-mark" data-tip="fB" tabindex="0" role="button" aria-label="Failure point B"><circle cx="983" cy="188" r="11"/><text x="983" y="188">B</text></g>
+          <g class="fail-mark" data-tip="fC" tabindex="0" role="button" aria-label="Failure point C"><circle cx="532" cy="172" r="11"/><text x="532" y="172">C</text></g>
+          <g class="fail-mark" data-tip="fD" tabindex="0" role="button" aria-label="Failure point D"><circle cx="930" cy="45" r="11"/><text x="930" y="45">D</text></g>
+          <g class="fail-mark" data-tip="fE" tabindex="0" role="button" aria-label="Failure point E"><circle cx="352" cy="382" r="11"/><text x="352" y="382">E</text></g>
+          <g class="fail-mark" data-tip="fF" tabindex="0" role="button" aria-label="Failure point F"><circle cx="838" cy="186" r="11"/><text x="838" y="186">F</text></g>
         </svg></div><div class="flow-tip" id="st-tip" role="tooltip" hidden></div></div>
       <p class="muted small">The failure points map to the rows of <span class="mono">docs/crash-analysis.md</span>; the <a href="#/failures">Failures</a> page can trigger them.</p>
     </div>
@@ -292,8 +306,8 @@ views.start = {
       ${go("room", "Waiting room", "The queue, its rate, and what it does and does not promise.")}
     </div></div>
 
-    <div class="card" id="st-glossary"><div class="card-head"><h2>Glossary</h2>
-      <label class="switch switch-chip" title="Show the definitions of the words used in this console"><input type="checkbox" id="st-gloss"><span class="switch-track"></span><span class="switch-label">Show definitions</span></label></div>
+    <div class="card" id="st-glossary"><div class="card-head head-left"><h2>Glossary</h2>
+      <label class="switch switch-chip" title="Show the words used in this console, with their meanings"><input type="checkbox" id="st-gloss"><span class="switch-track"></span><span class="switch-label">Show glossary</span></label></div>
       <dl class="glossary">${GLOSSARY.map(([t, d]) => `<div><dt>${esc(t)}</dt><dd>${esc(d)}</dd></div>`).join("")}</dl></div>`;
   },
   refresh(el) {
@@ -323,42 +337,84 @@ views.start = {
 };
 
 // ===== Overview =====
+// Each card answers one plain question with a verdict in words; the counters it came from sit underneath.
 views.overview = {
   title: "Overview",
-  desc: "A live picture of the engine: how traffic is being answered, how busy the database pool is, and what each strategy counted.",
+  desc: "Is the engine doing its job right now? Each card asks one question and answers it in words, with the numbers it is based on underneath.",
   render: () => `<div id="ov"></div>`,
   async refresh(el) {
     const [m, ev] = await Promise.all([api("/metrics"), api("/events")]);
     if (!m.ok) { el.innerHTML = `<div class="note warn">The API did not answer.</div>`; return; }
     const c = m.body.api.counters, st = m.body.strategy || {}, out = m.body.outcomes || {};
     const sum = (re) => Object.entries(c).filter(([k]) => re.test(k)).reduce((a, [, v]) => a + v, 0);
-    const holds = { held: sum(/^requests\{POST \/holds,201\}/), unavailable: sum(/^requests\{POST \/holds,409\}/), busy: sum(/^requests\{POST \/holds,503\}/), refused: sum(/^requests\{POST \/holds,403\}/) };
-    const total = holds.held + holds.unavailable + holds.busy + holds.refused;
+    const h = { got: sum(/^requests\{POST \/holds,201\}/), taken: sum(/^requests\{POST \/holds,409\}/), busy: sum(/^requests\{POST \/holds,503\}/), refused: sum(/^requests\{POST \/holds,403\}/) };
+    const total = h.got + h.taken + h.busy + h.refused;
     const prev = state.prevMetrics, now = performance.now();
     if (prev) state.rate = { holds: (total - prev.total) / ((now - prev.t) / 1000) };
     state.prevMetrics = { total, t: now };
     const lat = m.body.api.histograms["latency{POST /holds}"];
-    const strat = Object.entries(st).filter(([k]) => !k.startsWith("db_pool") && !k.startsWith("room_")).map(([k, v]) => `<tr><td class="mono">${esc(k)}</td><td>${fmtN(v)}</td></tr>`).join("");
     const pool = (k) => st["db_pool_" + k] ?? 0;
-    el.innerHTML = `
-      <div class="grid g4">
-        <div class="tile"><div class="k">Hold requests answered</div><div class="v">${fmtN(total)}</div><div class="s">${state.rate ? state.rate.holds.toFixed(1) + " per second right now" : "measuring…"}</div></div>
-        <div class="tile"><div class="k">Holds granted</div><div class="v">${fmtN(holds.held)}</div><div class="s">${fmtN(holds.unavailable)} unavailable · ${fmtN(holds.busy)} lock busy</div></div>
-        <div class="tile"><div class="k">Bookings confirmed</div><div class="v">${fmtN((out.confirmed_in_time || 0) + (out.confirmed_after_expiry || 0))}</div><div class="s">${fmtN(out.confirmed_after_expiry || 0)} after the hold expired · ${fmtN(out.paid_but_lost || 0)} paid but lost</div></div>
-        <div class="tile"><div class="k">Requests in flight</div><div class="v">${fmtN(m.body.inflight)}</div><div class="s">peak ${fmtN(m.body.max_inflight)}</div></div>
-      </div>
-      <div class="grid g2">
-        <div class="card"><h2>Hold latency (approximate)</h2>
-          <div class="kv"><div>Median, at most</div><div>${lat ? esc(lat.p50_ms_upper_bound) + " ms" : "–"}</div><div>99th percentile, at most</div><div>${lat ? esc(lat.p99_ms_upper_bound) + " ms" : "–"}</div><div>Requests measured</div><div>${fmtN(lat?.count)}</div></div>
-          <p class="muted small">These come from fixed buckets inside the server, so they are upper bounds, good for seeing a trend. The benchmark numbers are taken from the load generator instead.</p></div>
-        <div class="card"><h2>Database connections</h2>
-          <div class="kv"><div>Pool size</div><div>${fmtN(pool("max_conns"))}</div><div>In use / idle</div><div>${fmtN(pool("acquired_conns"))} / ${fmtN(pool("idle_conns"))}</div><div>Requests that had to wait for a connection</div><div>${fmtN(pool("acquires_that_waited"))} of ${fmtN(pool("acquires_total"))}</div></div>
-          <p class="muted small">A growing "had to wait" count means the pool, not the engine, is the limit.</p></div>
-      </div>
-      <div class="grid g2">
-        <div class="card"><h2>This strategy counted</h2><div class="table-wrap"><table><tbody>${strat || `<tr><td class="muted">nothing yet</td></tr>`}</tbody></table></div></div>
-        <div class="card"><h2>Events</h2><div class="table-wrap"><table><thead><tr><th>Event</th><th>Seats</th><th>State</th></tr></thead><tbody>${(ev.body?.events || []).map((e) => `<tr class="click" data-ev="${e.id}"><td>#${e.id} ${esc(e.name)}</td><td>${e.capacity}</td><td><div class="bar" title="${e.confirmed} booked, ${e.held} held, ${e.free} free"><span class="b-conf" style="width:${e.confirmed / e.capacity * 100}%"></span><span class="b-held" style="width:${e.held / e.capacity * 100}%"></span><span class="b-free" style="width:${e.free / e.capacity * 100}%"></span></div></td></tr>`).join("") || `<tr><td class="muted" colspan="3">No events yet</td></tr>`}</tbody></table></div></div>
-      </div>`;
+    const events = ev.body?.events || [];
+    const pct = (a, b) => (b ? Math.round((a / b) * 100) : 0);
+    const plural = (n, one, many) => (n === 1 ? one : many);
+
+    // --- the checks, each with a verdict
+    const overbooked = events.filter((e) => e.confirmed > e.capacity || e.confirmed + e.held + e.free !== e.capacity);
+    const waitedPct = pct(pool("acquires_that_waited"), pool("acquires_total"));
+    const concerns = [];
+    if (overbooked.length) concerns.push(["bad", `Event #${overbooked[0].id} does not add up: more bookings than seats, or seats unaccounted for. Run the Checker.`]);
+    if (out.paid_but_lost) concerns.push(["bad", `${fmtN(out.paid_but_lost)} buyer(s) paid but lost the seat. See the Checker and the payments card below.`]);
+    if (h.busy) concerns.push(["warn", `${fmtN(h.busy)} hold request(s) were turned away as "busy" because a seat was locked at that moment.`]);
+    if (st.gate_errors) concerns.push(["warn", `Redis failed ${fmtN(st.gate_errors)} time(s) and the engine fell back to Postgres alone. Still correct, but slower.`]);
+    if (st.room_fail_open) concerns.push(["warn", `The waiting room let ${fmtN(st.room_fail_open)} buyer(s) in without queueing because Redis was unreachable.`]);
+    if (pool("acquires_total") >= 200 && waitedPct >= 10) concerns.push(["warn", `${waitedPct}% of database calls had to wait for a free connection: the pool is the limit, not the engine.`]);
+    const level = concerns.some((x) => x[0] === "bad") ? "bad" : concerns.length ? "warn" : "ok";
+    const headline = { ok: "Everything is working as designed", warn: "Working, with something worth a look", bad: "A correctness check is failing" }[level];
+    const idle = total === 0;
+    const verdict = `<div class="verdict ${level}"><div class="vd-head"><span class="badge ${level === "ok" ? "ok" : level === "warn" ? "warn" : ""}">${level === "ok" ? "Healthy" : level === "warn" ? "Look closer" : "Problem"}</span><strong>${headline}</strong></div>
+      <ul>${concerns.length ? concerns.map((x) => `<li>${esc(x[1])}</li>`).join("") : `<li>No event is over-booked, no request was turned away as busy, and no payment was lost${idle ? ". No traffic has arrived yet: try the Surge page" : ""}.</li>`}</ul></div>`;
+
+    // --- buyers
+    const buyers = `<div class="card"><h2>Are buyers getting answers?</h2>
+      <p class="answer">${idle ? "No hold requests yet." : `Of ${fmtN(total)} hold ${plural(total, "request", "requests")}, ${fmtN(h.got)} got a seat and ${fmtN(h.taken)} were told the seat was already taken.`}</p>
+      <div class="bar tall"><span class="b-conf" style="width:${total ? (h.got / total) * 100 : 0}%" title="got a seat"></span><span class="b-held" style="width:${total ? (h.taken / total) * 100 : 0}%" title="seat taken"></span><span class="b-bad" style="width:${total ? ((h.busy + h.refused) / total) * 100 : 0}%" title="busy or refused"></span></div>
+      <div class="chips"><span class="chip"><i class="lg-sold"></i>${fmtN(h.got)} got a seat</span><span class="chip"><i class="lg-held"></i>${fmtN(h.taken)} seat taken</span>${h.busy ? `<span class="chip">${fmtN(h.busy)} busy</span>` : ""}${h.refused ? `<span class="chip">${fmtN(h.refused)} refused (no pass)</span>` : ""}</div>
+      <p class="muted small">"Seat taken" is the engine working: it tells the buyer straight away instead of letting two people believe they have the seat.${state.rate && state.rate.holds > 0.05 ? ` Right now about ${state.rate.holds.toFixed(1)} requests per second are arriving.` : ""}</p></div>`;
+
+    // --- correctness
+    const booked = events.reduce((a, e) => a + e.confirmed, 0), seats = events.reduce((a, e) => a + e.capacity, 0);
+    const correct = `<div class="card"><h2>Is any seat sold twice?</h2>
+      <p class="answer ${overbooked.length ? "bad" : events.length ? "good" : ""}">${overbooked.length ? `Something does not add up in event #${overbooked[0].id}.` : events.length ? `No sign of it. Across ${events.length} ${plural(events.length, "event", "events")}, ${fmtN(booked)} of ${fmtN(seats)} seats are booked, no event has more bookings than seats, and every seat is free, held or booked.` : "No events yet."}</p>
+      <p class="muted small">This is a quick look at the counts. The Checker page does the full audit straight from the database: one booking per seat, and nothing booked without a payment.</p></div>`;
+
+    // --- speed
+    const fast = `<div class="card"><h2>Is it fast?</h2>
+      <p class="answer">${lat ? `Half of the hold requests were answered within ${esc(lat.p50_ms_upper_bound)} ms, and 99 in 100 within ${esc(lat.p99_ms_upper_bound)} ms (${fmtN(lat.count)} measured).` : "Nothing measured yet."}</p>
+      <p class="muted small">These are upper bounds from fixed buckets inside the server, good for spotting a trend. Benchmark numbers come from the load generator, never from this page.</p></div>`;
+
+    // --- bottleneck
+    const limit = `<div class="card"><h2>Is something the bottleneck?</h2>
+      <p class="answer">${pool("acquires_total") === 0 ? "No database calls yet." : waitedPct < 10 ? `No. Only ${waitedPct}% of database calls waited for a connection (${fmtN(pool("acquires_that_waited"))} of ${fmtN(pool("acquires_total"))}).` : `Yes, the connection pool: ${waitedPct}% of database calls waited for a free connection.`}</p>
+      <div class="kv"><div>Connections in use</div><div>${fmtN(pool("acquired_conns"))} of ${fmtN(pool("max_conns"))}</div><div>Requests in flight</div><div>${fmtN(m.body.inflight)} now, peak ${fmtN(m.body.max_inflight)}</div>${st.inner_lock_busy !== undefined ? `<div>Seats found locked</div><div>${fmtN(st.inner_lock_busy)}</div>` : ""}</div></div>`;
+
+    // --- fast path, in words
+    const gate = st.gate_passed !== undefined ? `<div class="card"><h2>What the Redis fast path did</h2>
+      <p class="answer">${fmtN(st.gate_rejected)} ${plural(st.gate_rejected, "request was", "requests were")} stopped at Redis without touching Postgres; ${fmtN(st.gate_passed)} went on to Postgres.</p>
+      <div class="kv"><div>Stopped at Redis</div><div>${fmtN(st.gate_rejected)}</div><div>Passed to Postgres</div><div>${fmtN(st.gate_passed)}</div><div>Redis learned a seat is gone</div><div>${fmtN(st.gate_learned)}</div><div>Redis failed</div><div>${fmtN(st.gate_errors)}</div></div>
+      <p class="muted small">Redis only ever says "taken, don't bother Postgres". It never decides a seat is yours; Postgres does.</p></div>` : "";
+
+    // --- payments
+    const confirmed = (out.confirmed_in_time || 0) + (out.confirmed_after_expiry || 0);
+    const pay = `<div class="card"><h2>What happened to payments?</h2>
+      <p class="answer">${out.payment_attempts ? `${fmtN(confirmed)} ${plural(confirmed, "booking", "bookings")} confirmed from ${fmtN(out.payment_attempts)} payment ${plural(out.payment_attempts, "attempt", "attempts")}.` : "No payments yet."}</p>
+      <div class="kv"><div>Confirmed in time</div><div>${fmtN(out.confirmed_in_time)}</div><div>Confirmed after the hold ran out</div><div>${fmtN(out.confirmed_after_expiry)}</div><div>Payment failed or timed out</div><div>${fmtN((out.payment_failed || 0) + (out.payment_timed_out || 0))}</div><div>Paid but lost the seat</div><div>${fmtN(out.paid_but_lost)}</div></div>
+      <p class="muted small">"After the hold ran out" means the buyer was slow but nobody else took the seat, so the booking still stands.</p></div>`;
+
+    const cell = (cls, n) => `<td><span class="chip"><i class="${cls}"></i>${fmtN(n)}</span></td>`;
+    const rows = events.map((e) => `<tr class="click" data-ev="${e.id}"><td>#${e.id} ${esc(e.name)}</td><td>${e.capacity}</td>${cell("lg-sold", e.confirmed)}${cell("lg-held", e.held)}${cell("lg-free", e.free)}</tr>`).join("");
+    el.innerHTML = `${verdict}
+      <div class="grid g2">${buyers}${correct}${fast}${limit}${gate}${pay}</div>
+      <div class="card" style="margin-top:14px"><h2>Events</h2><p class="muted small" style="margin-top:0">Click an event to open its seat map.</p><div class="table-wrap"><table><thead><tr><th>Event</th><th>Seats</th><th>Booked</th><th>Held</th><th>Free</th></tr></thead><tbody>${rows || `<tr><td class="muted" colspan="5">No events yet</td></tr>`}</tbody></table></div></div>`;
     $$("tr[data-ev]", el).forEach((tr) => (tr.onclick = () => { state.eventId = Number(tr.dataset.ev); localStorage.setItem("eventId", state.eventId); location.hash = "#/inventory"; }));
   },
 };
@@ -368,7 +424,7 @@ views.inventory = {
   title: "Live seat map",
   desc: "Every seat of an event, updating as traffic arrives. Hold countdowns are computed from the database clock. A hold that has run out shows as free, because that is how the engine treats it.",
   every: 1000,
-  render: () => `<div class="card"><div class="row" id="inv-head"></div><div id="inv-sum" class="chips"></div>${legend(false)}<div id="inv-map"></div></div>`,
+  render: () => `<div class="note neutral">Read this page alongside the Failures page. It shows each seat's state as the server is crashed and restarted, so expiring holds and landing bookings can be observed while a fault is in progress.</div><div class="card"><div class="row" id="inv-head"></div><div id="inv-sum" class="chips"></div>${legend(false)}<div id="inv-map"></div></div>`,
   async refresh(el) {
     const list = await loadEvents();
     if (setHTML($("#inv-head", el), eventSelect(list) + `<label class="f">Seats per row<select id="rowsize">${[8, 10, 12, 20, 40].map((n) => `<option ${n === state.rowSize ? "selected" : ""}>${n}</option>`).join("")}</select></label>`)) {
@@ -396,18 +452,33 @@ views.inventory = {
 views.bookings = {
   title: "Bookings",
   desc: "The most recent confirmed bookings of an event, straight from the ledger. The ledger has a unique index per seat, so no seat can appear twice.",
-  render: () => `<div class="card"><div class="row" id="bk-head"></div><div class="table-wrap"><table><thead><tr><th>Booking</th><th>Seat</th><th>Buyer</th><th>Version</th><th>Booked at</th></tr></thead><tbody id="bk-body"></tbody></table></div></div>`,
+  render: () => `<div class="card"><div class="row" id="bk-head"></div><div id="bk-sum" class="chips"></div><div id="bk-body" class="purchase-grid"></div></div>`,
   async refresh(el) {
     const list = await loadEvents();
     if (setHTML($("#bk-head", el), eventSelect(list))) bindEventSelect(el, () => views.bookings.refresh(el));
     if (!state.eventId) return;
-    const r = await api(`/events/${state.eventId}/bookings?limit=100`);
+    const r = await api(`/events/${state.eventId}/bookings?limit=200`);
     const rows = r.body?.bookings || [];
-    $("#bk-body", el).innerHTML = rows.map((b) => `<tr class="click" data-i="${b.id}"><td class="mono">#${b.id}</td><td>${b.seat}</td><td>${esc(b.buyer)}</td><td>${b.hold_version}</td><td>${fmtTime(b.at)}</td></tr>`).join("") || `<tr><td class="muted" colspan="5">No bookings yet</td></tr>`;
-    $$("tr[data-i]", el).forEach((tr) => (tr.onclick = () => {
-      const b = rows.find((x) => x.id === Number(tr.dataset.i));
-      openDrawer("Booking", "#" + b.id, `<div class="kv"><div>Seat</div><div>${b.seat}</div><div>Buyer</div><div>${esc(b.buyer)}</div><div>Hold version</div><div>${b.hold_version}</div><div>Booked at</div><div>${new Date(b.at).toLocaleString()}</div></div>
-        <p class="muted small">The booking remembers the buyer and the hold version, so a retried confirm is recognised instead of booking twice.</p>`);
+    // seats bought in one request share the hold request id; rows without one stay on their own
+    const groups = [], byReq = new Map();
+    for (const b of rows) {
+      let g = b.request ? byReq.get(b.request) : null;
+      if (!g) { g = { request: b.request, items: [] }; groups.push(g); if (b.request) byReq.set(b.request, g); }
+      g.items.push(b);
+    }
+    const ago = (t) => { const s = Math.max(0, Math.round((Date.now() - new Date(t)) / 1000)); return s < 5 ? "just now" : s < 60 ? s + " s ago" : s < 3600 ? Math.round(s / 60) + " min ago" : fmtTime(t); };
+    const idRange = (g) => { const v = g.items.map((x) => x.id).sort((a, b) => a - b); return v.length > 1 && v.every((x, i) => i === 0 || x === v[i - 1] + 1) ? `#${v[0]} to #${v[v.length - 1]}` : v.map((x) => "#" + x).join(", "); };
+    const seatsOf = (g) => g.items.map((x) => x.seat).sort((a, b) => a - b);
+    $("#bk-sum", el).innerHTML = rows.length ? `<span class="chip">${groups.length} ${groups.length === 1 ? "purchase" : "purchases"}</span><span class="chip">${rows.length} ${rows.length === 1 ? "seat" : "seats"} booked</span>${rows.length >= 200 ? `<span class="chip">showing the latest 200 seats</span>` : ""}` : "";
+    $("#bk-body", el).innerHTML = groups.map((g, i) => `<button type="button" class="purchase" data-g="${i}">
+        <div class="pc-head"><div class="pc-who"><span class="pc-label">Booked by</span><strong title="${esc(g.items[0].buyer)}">${esc(g.items[0].buyer)}</strong></div><div class="pc-count"><b>${g.items.length}</b><span>${g.items.length === 1 ? "seat" : "seats"}</span></div></div>
+        <div class="pc-body"><span class="pc-label">Seats</span><div class="tk-seats">${seatsOf(g).map((n) => `<span class="seat-pill">${n}</span>`).join("")}</div></div>
+        <div class="pc-foot"><span>Booking ${idRange(g)}</span><span>${ago(g.items[0].at)}</span></div></button>`).join("") || `<p class="muted">No bookings yet.</p>`;
+    $$(".purchase", el).forEach((tk) => (tk.onclick = () => {
+      const g = groups[Number(tk.dataset.g)];
+      openDrawer("Purchase", `${g.items.length} ${g.items.length === 1 ? "seat" : "seats"} by ${g.items[0].buyer}`, `<div class="kv"><div>Buyer</div><div>${esc(g.items[0].buyer)}</div><div>Booked at</div><div>${new Date(g.items[0].at).toLocaleString()}</div><div>Seats</div><div>${seatsOf(g).join(", ")}</div></div>
+        <h3 style="margin:14px 0 6px;font-size:14px">Ledger rows</h3><div class="table-wrap"><table><thead><tr><th>Booking</th><th>Seat</th><th>Hold version</th></tr></thead><tbody>${g.items.slice().sort((a, b) => a.id - b.id).map((x) => `<tr><td class="mono">#${x.id}</td><td>${x.seat}</td><td>${x.hold_version}</td></tr>`).join("")}</tbody></table></div>
+        <p class="muted small">The ledger keeps one row per seat, which is what lets the database refuse a second booking of the same seat. The purchase view groups the rows that were bought together.</p>`);
     }));
   },
 };
@@ -473,14 +544,39 @@ views.health = {
     if (!h.body) { el.innerHTML = `<div class="note warn">The API is not answering.</div>`; return; }
     const b = h.body, cfg = b.config || {}, st = m.body?.strategy || {};
     const pill = (s) => (s === undefined ? `<span class="badge">not used</span>` : s === "ok" ? `<span class="badge ok">ok</span>` : `<span class="badge bad">${esc(s)}</span>`);
-    el.innerHTML = `<div class="grid g2">
-      <div class="card"><h2>Stores</h2><div class="kv"><div>Postgres (system of record)</div><div>${pill(b.postgres)}</div><div>Redis (gate and queue, a hint)</div><div>${pill(b.redis)}</div></div>
-        <p class="muted small">Redis down is a degraded state, not an outage: requests fail open to Postgres, which stays correct.</p></div>
-      <div class="card"><h2>How this server was started</h2><div class="kv">${Object.entries(cfg).map(([k, v]) => `<div>${esc(k.replace(/_/g, " "))}</div><div class="mono">${esc(v)}</div>`).join("")}</div></div>
-      <div class="card"><h2>Safety switches</h2><div class="kv"><div>Fault injection</div><div>${b.faults_enabled ? `<span class="badge warn">ENABLED: this server can be made to crash</span>` : `<span class="badge ok">off</span>`}</div>
-        <div>Admin token configured</div><div>${b.admin_token_configured ? `<span class="badge ok">yes</span>` : `<span class="badge">no</span>`}</div><div>Waiting room</div><div>${b.waiting_room ? "on" : "off"}</div></div>
-        <p class="muted small">Benchmarks refuse to run while fault injection is enabled.</p></div>
-      <div class="card"><h2>Connection pool</h2><div class="kv"><div>Size</div><div>${fmtN(st.db_pool_max_conns)}</div><div>In use</div><div>${fmtN(st.db_pool_acquired_conns)}</div><div>Waited for a connection</div><div>${fmtN(st.db_pool_acquires_that_waited)} of ${fmtN(st.db_pool_acquires_total)}</div></div></div></div>`;
+    const cfgRows = Object.entries(cfg).map(([k, v]) => `<div class="cfg"><span class="muted small">${esc(k.replace(/_/g, " "))}</span><strong class="mono">${esc(v)}</strong></div>`).join("");
+    el.innerHTML = `<div class="split2">
+      <div class="fill-col">
+        <div class="card"><h2>Stores</h2><div class="kv"><div>Postgres (system of record)</div><div>${pill(b.postgres)}</div><div>Redis (gate and queue, a hint)</div><div>${pill(b.redis)}</div></div>
+          <p class="muted small">Redis down is a degraded state, not an outage: requests fail open to Postgres, which stays correct.</p></div>
+        <div class="card"><h2>Connection pool</h2><div class="kv"><div>Size</div><div>${fmtN(st.db_pool_max_conns)}</div><div>In use</div><div>${fmtN(st.db_pool_acquired_conns)}</div><div>Waited for a connection</div><div>${fmtN(st.db_pool_acquires_that_waited)} of ${fmtN(st.db_pool_acquires_total)}</div></div></div>
+      </div>
+      <div class="card fill-card"><h2>Safety switches</h2><div class="switch-list">
+        <div class="sw-row"><div class="sw-top"><strong>Fault injection</strong>${b.faults_enabled ? `<span class="badge warn">on</span>` : `<span class="badge ok">off</span>`}</div>
+          <div class="muted small">${b.faults_enabled ? "This server can be made to crash on request. Fine for crash tests, never for a real deployment." : "Crash hooks cannot be triggered."} Benchmarks refuse to run while it is on.</div></div>
+        <div class="sw-row"><div class="sw-top"><strong>Admin token</strong>${b.admin_token_configured ? `<span class="badge ok">set</span>` : `<span class="badge">not set</span>`}</div>
+          <div class="muted small">${b.admin_token_configured ? "The Failures and Checker pages need it." : "Without it the admin actions are refused."}</div></div>
+        <div class="sw-row"><div class="sw-top"><strong>Waiting room</strong>${b.waiting_room ? `<span class="badge ok">on</span>` : `<span class="badge">off</span>`}</div>
+          <div class="muted small">${b.waiting_room ? "Buyers need a pass before they can place a hold." : "Anyone can place a hold directly."}</div></div></div></div>
+    </div>
+    <div class="card"><h2>How this server was started</h2><div class="cfg-grid">${cfgRows}</div></div>`;
+  },
+};
+
+// ===== Create event =====
+views.events = {
+  title: "Create event",
+  desc: "An event is the thing buyers compete for: a numbered set of seats. Create one here, then book it by hand, send a crowd at it, or crash the server while it sells.",
+  render: () => `${createEventForm()}<div class="card"><h2>Existing events</h2><div id="ev-list"></div></div>`,
+  async refresh(el) {
+    const list = await loadEvents();
+    bindCreateEvent(el, () => views.events.refresh(el));
+    const pick = (e) => `data-ev="${e.id}"`;
+    setHTML($("#ev-list", el), list.length ? `<div class="table-wrap"><table><thead><tr><th>Event</th><th>Seats</th><th>Booked</th><th>Held</th><th>Free</th><th></th></tr></thead><tbody>${list.map((e) => `<tr ${pick(e)}><td>#${e.id} ${esc(e.name)}${e.id === state.eventId ? ` <span class="badge ok">selected</span>` : ""}</td><td>${e.capacity}</td><td>${e.confirmed}</td><td>${e.held}</td><td>${e.free}</td><td class="ev-actions"><button class="btn btn-ghost" data-act="book">Book seats</button><button class="btn btn-ghost" data-act="map">Seat map</button></td></tr>`).join("")}</tbody></table></div>` : `<p class="muted">No events yet. Create the first one above.</p>`);
+    $$("#ev-list [data-act]", el).forEach((b) => (b.onclick = () => {
+      state.eventId = Number(b.closest("tr").dataset.ev); localStorage.setItem("eventId", state.eventId); state.book.picked.clear();
+      location.hash = b.dataset.act === "book" ? "#/book" : "#/inventory";
+    }));
   },
 };
 
@@ -496,16 +592,15 @@ const OUTCOME_TEXT = {
 };
 views.book = {
   title: "Book seats",
-  desc: "Pick up to six seats, hold them, then pay. This is the same two-step flow a real buyer goes through: select, then pay.",
+  desc: "Pick up to six seats, proceed to reserve them, then pay. This is the same two-step flow a real buyer goes through: select, then pay. Behind the button, proceeding places a hold on the seats.",
   every: 1000,
-  render: () => `<div class="split"><div class="card"><div class="row" id="bk-ev"></div>${legend(true)}<div id="bk-map"></div></div>
-    <div><div class="card ticket" id="bk-panel"></div>${createEventForm()}</div></div>`,
+  render: () => `<div class="split stretch"><div class="card"><div class="row" id="bk-ev"></div>${legend(true)}<div id="bk-map"></div></div>
+    <div><div class="card ticket" id="bk-panel"></div><div id="bk-ticket"></div></div></div>`,
   async refresh(el) {
     if (state.book.busy) return; // do not redraw under an action in progress
     const list = await loadEvents();
     if (setHTML($("#bk-ev", el), eventSelect(list))) bindEventSelect(el, () => views.book.refresh(el));
-    bindCreateEvent(el, () => views.book.refresh(el));
-    if (!state.eventId) { $("#bk-map", el).innerHTML = `<p class="muted">Create an event to start.</p>`; renderBookPanel(el, []); return; }
+    if (!state.eventId) { $("#bk-map", el).innerHTML = `<p class="muted"><a href="#/events">Create an event</a> to start.</p>`; renderBookPanel(el, []); return; }
     const r = await api(`/events/${state.eventId}/items`);
     if (!r.ok) return;
     const items = r.body.items, mine = new Set((state.book.hold?.items || []).map((i) => i.id));
@@ -521,13 +616,26 @@ views.book = {
     renderBookPanel(el, items);
   },
 };
+// A preview of the ticket this purchase will become: it fills with the seats as they are picked.
+function renderTicketPreview(el, items) {
+  const b = state.book, ev = (state.eventList || []).find((e) => e.id === state.eventId);
+  const seq = (id) => items.find((i) => i.id === id)?.seq ?? id;
+  const seats = b.hold ? b.hold.items.map((i) => i.seq) : [...b.picked].map(seq);
+  const sample = !seats.length, shown = (sample ? [12, 13] : seats.slice().sort((x, y) => x - y));
+  const foot = b.hold ? "Reserved: pay to confirm" : sample ? "Pick seats to fill in your ticket" : "Not reserved yet";
+  setHTML($("#bk-ticket", el), `<div class="preview-title muted small">Your ticket${sample ? " (example)" : ""}</div>
+    <div class="purchase preview${sample ? " sample" : ""}"><div class="pc-head"><div class="pc-who"><span class="pc-label">Event</span><strong>${esc(ev ? ev.name : "Event")}</strong></div><div class="pc-count"><b>${shown.length}</b><span>${shown.length === 1 ? "seat" : "seats"}</span></div></div>
+      <div class="pc-body"><span class="pc-label">Seats</span><div class="tk-seats">${shown.map((n) => `<span class="seat-pill">${n}</span>`).join("")}</div><span class="pc-label" style="margin-top:4px">Booked by</span><strong class="pc-buyer">${esc(state.buyer)}</strong></div>
+      <div class="pc-foot"><span>${foot}</span><span>${ev ? "#" + ev.id : ""}</span></div></div>`);
+}
 function renderBookPanel(el, items) {
+  renderTicketPreview(el, items);
   const b = state.book, panel = $("#bk-panel", el), seq = (id) => items.find((i) => i.id === id)?.seq ?? id;
   const log = b.log.slice(-4).map((l) => `<div class="note ${l.kind}">${l.text}</div>`).join("");
   if (b.hold) {
     const dl = b.hold.deadline;
-    setHTML(panel, `<h2>Your hold</h2><div class="chips">${b.hold.items.map((i) => `<span class="chip acc">Seat ${i.seq}</span>`).join("")}</div>
-      <div class="countdown" data-dl="${dl}">${secs(dl - performance.now())}s</div><div class="muted small">left on your ${term("hold", "hold")} (a soft limit: if nobody takes your seats, paying late still works)</div>
+    setHTML(panel, `<h2>Seats reserved for you</h2><div class="chips">${b.hold.items.map((i) => `<span class="chip acc">Seat ${i.seq}</span>`).join("")}</div>
+      <div class="countdown" data-dl="${dl}">${secs(dl - performance.now())}s</div><div class="muted small">left to pay (this is your ${term("hold", "hold")}: a soft limit, so if nobody takes your seats, paying late still works)</div>
       <div class="kv" style="margin-top:8px"><div>${term("version", "Version")}</div><div>${b.hold.items.map((i) => i.version).join(", ")}</div><div>Request id</div><div class="mono">${esc(b.hold.requestId)}</div></div>
       <div class="btn-row"><button class="btn btn-primary" id="bk-pay" ${b.busy ? "disabled" : ""}>Pay (simulated)</button><button class="btn" id="bk-rel" ${b.busy ? "disabled" : ""}>Release</button><button class="btn btn-ghost" id="bk-retry" title="Sends exactly the same hold request again, as a client would after a lost reply. You get the same hold back, not a second one.">Retry the hold request</button></div>
       <div class="muted small">${esc(b.status)}</div>${log}`);
@@ -537,7 +645,7 @@ function renderBookPanel(el, items) {
   const n = b.picked.size;
   if (!setHTML(panel, `<h2>Your selection</h2>${n ? `<div class="chips">${[...b.picked].map((id) => `<span class="chip acc">Seat ${seq(id)}</span>`).join("")}</div>` : `<p class="muted">Click free seats on the map (up to six).</p>`}
     <label class="f">Buyer id<input type="text" id="bk-buyer" value="${esc(state.buyer)}" size="20" title="Who you are. Two browsers with different ids compete for the same seats."></label>
-    <div class="btn-row"><button class="btn btn-primary" id="bk-hold" ${n && !b.busy ? "" : "disabled"}>Hold ${n || ""} seat${n === 1 ? "" : "s"}</button><button class="btn btn-ghost" id="bk-clear" ${n ? "" : "disabled"}>Clear</button></div>
+    <div class="btn-row"><button class="btn btn-primary" id="bk-hold" ${n && !b.busy ? "" : "disabled"}title="Reserves the seats for you for a short time while you pay (the engine places a hold)">Proceed${n ? ` with ${n} seat${n === 1 ? "" : "s"}` : ""}</button><button class="btn btn-ghost" id="bk-clear" ${n ? "" : "disabled"}>Clear</button></div>
     <div class="muted small">${esc(b.status)}</div>${log}`)) return; // nothing changed: keep what the buyer is typing
   $("#bk-buyer", panel).onchange = (e) => { state.buyer = e.target.value.trim() || state.buyer; localStorage.setItem("buyer", state.buyer); };
   $("#bk-hold", panel).onclick = () => holdSelected(el, items); $("#bk-clear", panel).onclick = () => { b.picked.clear(); views.book.refresh(el); };
@@ -555,7 +663,7 @@ async function holdSelected(el, items) {
     b.hold = { requestId, ids, items: r.body.items.map((i) => ({ id: i.item_id, version: i.hold_version, seq: items.find((x) => x.id === i.item_id)?.seq ?? i.item_id })), deadline: performance.now() + 60000, token };
     const ttl = await api(`/events/${state.eventId}/items`); const mine = ttl.body?.items?.find((x) => x.id === ids[0]);
     if (mine?.expires_in_ms) b.hold.deadline = performance.now() + mine.expires_in_ms;
-    b.picked.clear(); note("good", `Held ${ids.length} seat(s). Pay before the countdown ends, or someone else may take them.`);
+    b.picked.clear(); note("good", `${ids.length} seat${ids.length === 1 ? "" : "s"} reserved for you. Pay before the countdown ends, or someone else may take them.`);
   } else if (r.status === 0) note("bad", "The connection broke before an answer came back. The hold may or may not exist: use <b>Retry the hold request</b> to find out safely.");
   else { const [kind, text] = OUTCOME_TEXT[r.body?.outcome] || ["bad", esc(r.body?.error || "Unexpected answer " + r.status)]; note(kind, text); b.picked.clear(); }
   views.book.refresh(el);
@@ -597,25 +705,44 @@ views.surge = {
     <label class="f">Over (seconds)<input type="number" id="sg-t" value="8" min="2" max="60" style="width:90px"></label>
     <label class="f" title="0 spreads demand evenly. Higher values concentrate it on a few hot seats.">Skew<input type="number" id="sg-s" value="1.1" step="0.1" min="0" max="2" style="width:80px"></label></div>
     <div class="btn-row"><button class="btn btn-primary" id="sg-go">Start</button></div><div class="progress" style="margin-top:12px"><span id="sg-bar" style="width:0"></span></div><div id="sg-sum" class="muted small" style="margin-top:6px"></div></div>
-    <div class="card"><h2>Outcome</h2><div id="sg-out" class="kv"></div><p class="muted small">When it ends, open the <a href="#/inventory">seat map</a>, then run the <a href="#/checker">checker</a> to confirm nothing was sold twice.</p></div></div>${createEventForm()}`,
+    <div class="card"><h2>Outcome</h2><div id="sg-out"></div><p class="muted small">When it ends, open the <a href="#/inventory">seat map</a>, then run the <a href="#/checker">checker</a> to confirm nothing was sold twice.</p></div></div>`,
   async refresh(el) {
     if (el.dataset.running) return;
+    paintSurge(el);
     const list = await loadEvents();
     if (setHTML($("#sg-ev", el), eventSelect(list))) bindEventSelect(el, () => views.surge.refresh(el));
-    bindCreateEvent(el, () => views.surge.refresh(el));
     $("#sg-go", el).onclick = () => runSurge(el);
   },
 };
+// The outcome card is always filled in: zeros before a run, live numbers during one, the last result after it.
+function paintSurge(el) {
+  const r = state.surgeRun, t = r?.tally || { held: 0, unavailable: 0, busy: 0, confirmed: 0, lost: 0, failed: 0, errors: 0, turnedAway: 0 };
+  const tile = (cls, label, v, hint) => `<div class="o-tile ${cls}" title="${hint}"><span class="o-n">${v}</span><span class="o-l">${label}</span></div>`;
+  const line = !r ? "No crowd sent yet. Choose how many buyers and press Start: the numbers below fill in as they arrive."
+    : r.running ? `${r.done} of ${r.n} buyers finished so far.`
+    : `${t.confirmed} of ${r.n} buyers booked their seats and ${t.unavailable} were told the seats were already taken.`;
+  setHTML($("#sg-out", el), `<p class="answer">${line}</p><div class="o-grid">
+    ${tile("good", "Bookings confirmed", t.confirmed, "Held the seats, paid, and the booking was written")}
+    ${tile("", "Holds granted", t.held, "Got the seats for the hold time (includes the bookings above)")}
+    ${tile("", "Seat taken by others", t.unavailable, "The engine answered straight away that a seat was gone")}
+    ${tile("warn", "Lock busy", t.busy, "A seat was locked at that instant; the buyer retried and gave up")}
+    ${tile("warn", "Turned away by the room", t.turnedAway, "The waiting room was full")}
+    ${tile("bad", "Paid but lost", t.lost, "Paid after the hold ran out and another buyer had the seat")}
+    ${tile("warn", "Payment failed or timed out", t.failed, "The simulated payment failed, so the seats were released")}
+    ${tile("bad", "Errors", t.errors, "Anything unexpected")}</div>`);
+}
 async function runSurge(el) {
-  if (!state.eventId) return toast("Create an event first", "bad");
+  if (!state.eventId) { location.hash = "#/events"; return toast("Create an event first", "bad"); }
   const n = Number($("#sg-n", el).value), over = Number($("#sg-t", el).value) * 1000, skew = Number($("#sg-s", el).value);
   const items = (await api(`/events/${state.eventId}/items`)).body.items.map((i) => i.id);
   const pick = zipfPicker(items.length, skew), sizes = [1, 2, 2, 3, 4, 6, 2, 2, 1, 3];
   const tally = { held: 0, unavailable: 0, busy: 0, confirmed: 0, lost: 0, failed: 0, errors: 0, turnedAway: 0 };
   let done = 0; el.dataset.running = "1";
+  state.surgeRun = { tally, n, done: 0, running: true };
   const show = () => {
+    state.surgeRun.done = done;
     $("#sg-bar", el).style.width = (done / n * 100) + "%"; $("#sg-sum", el).textContent = `${done} of ${n} buyers finished`;
-    $("#sg-out", el).innerHTML = Object.entries({ "Holds granted": tally.held, "Seats taken by others": tally.unavailable, "Lock busy": tally.busy, "Bookings confirmed": tally.confirmed, "Paid but lost": tally.lost, "Payment failed or timed out": tally.failed, "Turned away by the room": tally.turnedAway, "Errors": tally.errors }).map(([k, v]) => `<div>${k}</div><div>${v}</div>`).join("");
+    paintSurge(el);
   };
   const buyer = async (i) => {
     const id = `surge-${uid()}-${i}`, ids = pick(sizes[i % sizes.length]).map((k) => items[k]);
@@ -634,7 +761,7 @@ async function runSurge(el) {
   };
   show();
   const jobs = Array.from({ length: n }, (_, i) => sleep(i * over / n).then(() => buyer(i)));
-  await Promise.all(jobs); delete el.dataset.running; toast("The crowd has finished", "ok");
+  await Promise.all(jobs); delete el.dataset.running; state.surgeRun.running = false; paintSurge(el); toast("The crowd has finished", "ok");
 }
 
 // ===== Failures =====
@@ -660,8 +787,8 @@ views.failures = {
     const b = h.body || {};
     let gate = "";
     if (!b.faults_enabled) gate = `<div class="note warn">Fault injection is off on this server. Start it with <span class="mono">FAULTS_ENABLED=true ADMIN_TOKEN=&lt;token&gt;</span>, or simply use <span class="mono">scripts/up</span>, which turns it on and restarts the server after a crash.</div>`;
-    else if (!state.token) gate = `<div class="note warn">Enter the admin token in the top bar.</div>`;
-    else if (f.status === 401) gate = `<div class="note warn">The admin token was refused.</div>`;
+    else if (!state.token) { if (!state.tokenAsked) { state.tokenAsked = true; needToken(); } }
+    else if (f.status === 401 && state.tokenRefusedFor !== state.token) { state.tokenRefusedFor = state.token; needToken("The admin token was refused: check it in the top bar"); }
     setHTML($("#fl-gate", el), gate);
     const armed = f.body?.faults || [], known = f.body?.known || {};
     setHTML($("#fl-armed", el), `<h2>Armed right now</h2>${armed.length ? `<table><thead><tr><th>Point</th><th>Action</th><th>Left</th></tr></thead><tbody>${armed.map((a) => `<tr><td class="mono">${esc(a.point)}</td><td>${esc(a.action)}</td><td>${a.remaining ?? "∞"}</td></tr>`).join("")}</tbody></table>` : `<p class="muted">Nothing armed.</p>`}
@@ -669,24 +796,26 @@ views.failures = {
     if (setHTML($("#fl-table", el), `<h2>Every failure point</h2><div class="table-wrap"><table><thead><tr><th>Point</th><th>Row</th><th>Where</th><th>Arm it</th></tr></thead><tbody>${Object.keys(known).sort().map((p) => `<tr><td class="mono">${esc(p)}</td><td>${esc(FAULT_INFO[p]?.[0] || "")}</td><td>${esc(FAULT_INFO[p]?.[1] || "")}</td><td>${(known[p] || []).map((a) => `<button class="btn" data-arm="${esc(p)}" data-action="${esc(a)}">${esc(a)} once</button>`).join(" ")}</td></tr>`).join("") || `<tr><td class="muted" colspan="4">Unlocks once faults are enabled and the token is entered.</td></tr>`}</tbody></table></div>
         <p class="muted small">"Row" is the row of <span class="mono">docs/crash-analysis.md</span>. A crash makes the whole process exit: the API pill turns red until it is restarted.</p>`)) {
       $$("[data-arm]", el).forEach((bn) => (bn.onclick = async () => {
+        if (!state.token) return needToken();
         const action = bn.dataset.action, body = { action, remaining: 1 }; if (action === "delay") body.params = { delay_ms: 1500 };
         const r = await api("/admin/faults/" + bn.dataset.arm, { method: "PUT", admin: true, body });
         toast(r.status === 204 ? `Armed ${bn.dataset.arm}: ${action} once` : (r.body?.error || "Could not arm"), r.status === 204 ? "ok" : "bad"); views.failures.refresh(el);
       }));
     }
     const clear = $("#fl-clear", el);
-    if (clear) clear.onclick = async () => { await api("/admin/faults", { method: "DELETE", admin: true }); toast("Cleared", "ok"); views.failures.refresh(el); };
+    if (clear) clear.onclick = async () => { if (!state.token) return needToken(); await api("/admin/faults", { method: "DELETE", admin: true }); toast("Cleared", "ok"); views.failures.refresh(el); };
     $("#fl-d9", el).onclick = () => demo(el, "hold.before_reply");
     $("#fl-d17", el).onclick = () => demo(el, "confirm.before_reply");
   },
 };
 async function demo(el, point) {
+  if (!state.token) return needToken();
   const log = $("#fl-log", el);
   const say = (kind, t) => { log.insertAdjacentHTML("beforeend", `<div class="note ${kind}">${t}</div>`); };
   log.innerHTML = "";
   try {
     const list = await loadEvents();
-    if (!state.eventId) { say("warn", "Create an event first (Book seats page)."); return; }
+    if (!state.eventId) { say("warn", "Create an event first (Create event page)."); return; }
     const items = (await api(`/events/${state.eventId}/items`)).body.items, free = items.find((i) => i.state === "free");
     if (!free) { say("warn", "No free seat left in this event: create a new one."); return; }
     const buyer = "demo-" + uid(), rid = "demo-req-" + uid();
@@ -703,6 +832,7 @@ async function demo(el, point) {
       refs = h.body.items.map((i) => ({ item_id: i.item_id, hold_version: i.hold_version })); say("", `1. ${esc(buyer)} holds seat ${free.seq} (version ${refs[0].hold_version}).`);
     }
     const arm = await api("/admin/faults/" + point, { method: "PUT", admin: true, body: { action: "crash", remaining: 1 } });
+    if (arm.status === 401 || arm.status === 403) { needToken(arm.status === 401 ? "The admin token was refused: check it in the top bar" : undefined); return; }
     if (arm.status !== 204) { say("warn", esc(arm.body?.error || "Could not arm the crash: is fault injection enabled and the token entered?")); return; }
     say("", `${refs ? 2 : 1}. Armed a crash at <span class="mono">${point}</span>.`);
     const first = refs ? await api("/holds/confirm", { method: "POST", body: { buyer_id: buyer, items: refs } }) : await hold();
@@ -730,7 +860,7 @@ views.checker = {
   refresh(el) {
     $("#ck-run", el).onclick = async () => {
       const r = await api("/admin/check", { admin: true }), out = $("#ck-out", el);
-      if (r.status === 401 || r.status === 403) { out.innerHTML = `<div class="note warn">${esc(r.body?.error || "Not allowed")}. Enter the admin token in the top bar.</div>`; return; }
+      if (r.status === 401 || r.status === 403) { out.innerHTML = ""; needToken(r.status === 401 && state.token ? "The admin token was refused: check it in the top bar" : undefined); return; }
       if (!r.ok) { out.innerHTML = `<div class="note warn">The checker could not run.</div>`; return; }
       const rep = r.body.report, row = (ok, name, why, val) => `<tr><td><span class="badge ${ok ? "ok" : "bad"}">${ok ? "PASS" : "FAIL"}</span></td><td>${name}</td><td class="mono">${val}</td><td class="muted">${why}</td></tr>`;
       out.innerHTML = `<div class="note ${r.body.ok ? "good" : "bad"}"><b>${r.body.ok ? "Every rule holds." : "A rule is broken."}</b> Checked at ${fmtTime(r.body.checked_at)}: ${fmtN(rep.confirmed_bookings)} confirmed bookings against a total capacity of ${fmtN(rep.total_capacity)}.</div>
@@ -749,7 +879,7 @@ views.checker = {
 const ROUTES = Object.keys(views);
 function parseHash() { const r = (location.hash.replace(/^#\//, "") || "start").split("?")[0]; return ROUTES.includes(r) ? r : "start"; }
 function show(route) {
-  state.route = route; const v = views[route];
+  state.route = route; state.tokenAsked = false; state.tokenRefusedFor = null; const v = views[route];
   $("#page-title").textContent = v.title; $("#page-desc").textContent = v.desc; document.title = v.title + " · Resource Reservation Engine";
   $$("#nav a").forEach((a) => a.classList.toggle("active", a.dataset.route === route));
   const el = $("#views"); el.innerHTML = v.render(); closeDrawer();
@@ -770,7 +900,7 @@ async function checkApi() {
   }
 }
 const THEMES = ["auto", "light", "dark"], ICON = { auto: "◐", light: "☀", dark: "☾" };
-function applyTheme() { const t = localStorage.getItem("theme") || "auto"; if (t === "auto") delete document.documentElement.dataset.theme; else document.documentElement.dataset.theme = t; $("#theme").textContent = ICON[t]; $("#theme-label").textContent = "Theme: " + t; }
+function applyTheme() { const t = localStorage.getItem("theme") || "auto"; if (t === "auto") delete document.documentElement.dataset.theme; else document.documentElement.dataset.theme = t; $("#theme").textContent = ICON[t]; $("#theme-label").textContent = "Theme: " + t; $("#theme").title = "Theme: " + t + " (click to change)"; }
 
 window.addEventListener("hashchange", () => show(parseHash()));
 $("#drawer-close").onclick = closeDrawer; $("#drawer-backdrop").onclick = closeDrawer;

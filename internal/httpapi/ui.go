@@ -143,7 +143,7 @@ func (h *Handler) eventBookings(w http.ResponseWriter, r *http.Request) {
 		limit = n
 	}
 	rows, err := h.d.Pool.Query(r.Context(), `
-		SELECT b.id, i.seq, b.buyer_id, b.hold_version, b.created_at
+		SELECT b.id, i.seq, b.buyer_id, b.hold_version, b.created_at, COALESCE(i.hold_request_id, '')
 		FROM bookings b JOIN items i ON i.id = b.item_id
 		WHERE b.event_id = $1 AND b.status = 'confirmed' ORDER BY b.id DESC LIMIT $2`, id, limit)
 	if err != nil {
@@ -155,13 +155,13 @@ func (h *Handler) eventBookings(w http.ResponseWriter, r *http.Request) {
 	for rows.Next() {
 		var bid, version int64
 		var seq int
-		var buyer string
+		var buyer, request string
 		var at time.Time
-		if err := rows.Scan(&bid, &seq, &buyer, &version, &at); err != nil {
+		if err := rows.Scan(&bid, &seq, &buyer, &version, &at, &request); err != nil {
 			fail(w, http.StatusInternalServerError, err.Error())
 			return
 		}
-		out = append(out, map[string]any{"id": bid, "seat": seq, "buyer": buyer, "hold_version": version, "at": at})
+		out = append(out, map[string]any{"id": bid, "seat": seq, "buyer": buyer, "hold_version": version, "at": at, "request": request})
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"bookings": out})
 }

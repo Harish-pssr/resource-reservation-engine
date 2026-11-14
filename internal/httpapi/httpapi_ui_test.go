@@ -87,6 +87,33 @@ func TestBookingsListIsNewestFirst(t *testing.T) {
 	}
 }
 
+// Seats bought in one request are separate booking rows. The list reports the hold request id
+// they share, so the console can show them as one purchase; another buyer's seat has a different one.
+func TestBookingsListCarriesTheRequestIDSharedByOnePurchase(t *testing.T) {
+	f := newFaultFixture(t, false, adminToken, time.Millisecond)
+	code, out := f.call("POST", "/holds", map[string]any{"buyer_id": "alice", "request_id": "multi", "item_ids": []int64{f.items[0], f.items[1], f.items[2]}}, "")
+	if code != 201 {
+		t.Fatalf("hold: %d %v", code, out)
+	}
+	var refs []map[string]any
+	for _, it := range out["items"].([]any) {
+		m := it.(map[string]any)
+		refs = append(refs, map[string]any{"item_id": m["item_id"], "hold_version": m["hold_version"]})
+	}
+	f.confirm("alice", refs)
+	_, _, bobRefs := f.holdItem("bob", "single", f.items[3])
+	f.confirm("bob", bobRefs)
+
+	_, got := f.get("/events/1/bookings", "")
+	byRequest := map[string]int{}
+	for _, raw := range got["bookings"].([]any) {
+		byRequest[raw.(map[string]any)["request"].(string)]++
+	}
+	if len(byRequest) != 2 || byRequest["multi"] != 3 || byRequest["single"] != 1 {
+		t.Fatalf("bookings per request id: %v", byRequest)
+	}
+}
+
 func TestUnknownEventIs404AndBadIDIs400(t *testing.T) {
 	f := newFaultFixture(t, false, adminToken, time.Millisecond)
 	if code, _ := f.get("/events/99999/items", ""); code != http.StatusNotFound {

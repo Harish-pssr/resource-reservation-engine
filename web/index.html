@@ -30,6 +30,7 @@
       <a href="#/room" data-route="room">Waiting room</a>
       <a href="#/health" data-route="health">Health</a>
       <div class="nav-group">Try it</div>
+      <a href="#/events" data-route="events">Create event</a>
       <a href="#/book" data-route="book">Book seats</a>
       <a href="#/surge" data-route="surge">Surge</a>
       <a href="#/failures" data-route="failures">Failures</a>
@@ -38,10 +39,9 @@
 
     <div class="sidebar-foot">
       <div id="api-pill" class="pill pill-unknown"><span class="dot"></span><span id="api-pill-text">Checking API…</span></div>
-      <div id="redis-pill" class="pill pill-unknown" hidden><span class="dot"></span><span id="redis-pill-text"></span></div>
-      <div class="theme-row">
-        <button type="button" class="theme-btn" id="theme" aria-label="Colour theme"></button>
-        <span class="muted small" id="theme-label"></span>
+      <div class="foot-row">
+        <div id="redis-pill" class="pill pill-unknown" hidden><span class="dot"></span><span id="redis-pill-text"></span></div>
+        <button type="button" class="theme-btn" id="theme" aria-label="Colour theme"></button><span id="theme-label" hidden></span>
       </div>
     </div>
   </aside>
