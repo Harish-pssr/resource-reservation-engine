@@ -203,8 +203,8 @@ func decode(w http.ResponseWriter, r *http.Request, v any) bool {
 }
 
 // maxEventItems bounds one event so a mistaken request cannot create an unbounded table. It is large enough for the
-// capacity ramp (D10: inventory sized from the rate), which needs about 2 million items at 25,000 buyers/s.
-const maxEventItems = 2_000_000
+// capacity ramp (D10: inventory sized from the rate), which needs about 2.1 million items to confirm 18,000 buyers/s for 30 s, and more above that.
+const maxEventItems = 4_000_000
 
 // ---- handlers ----
 
