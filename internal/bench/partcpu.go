@@ -60,12 +60,7 @@ func (s *PartSampler) Start(ctx context.Context) {
 	ctx, s.cancel = context.WithCancel(ctx)
 	go func() {
 		defer close(s.done)
-		prev := make([]uint64, len(s.parts))
-		have := make([]bool, len(s.parts))
-		for i, p := range s.parts {
-			prev[i], have[i] = p.Read()
-		}
-		last := time.Now()
+		w := newWindows(s.parts, time.Now(), s.interval)
 		t := time.NewTicker(s.interval)
 		defer t.Stop()
 		for {
@@ -74,18 +69,46 @@ func (s *PartSampler) Start(ctx context.Context) {
 				return
 			case <-t.C:
 			}
-			now := time.Now()
-			wall := float64(now.Sub(last).Microseconds())
-			last = now
-			for i, p := range s.parts {
-				cur, ok := p.Read()
-				if ok && have[i] && cur >= prev[i] && wall > 0 { // a counter that went back means the part restarted: skip that window
-					s.add(p.Name, float64(cur-prev[i]), wall)
-				}
-				prev[i], have[i] = cur, ok
-			}
+			w.observe(time.Now(), s.add)
 		}
 	}()
+}
+
+// windows turns cumulative CPU counters into per-window readings.
+type windows struct {
+	parts    []Part
+	min      time.Duration // a window shorter than this is merged into the next one
+	prev     []uint64
+	have     []bool
+	lastTick time.Time
+}
+
+func newWindows(parts []Part, now time.Time, interval time.Duration) *windows {
+	w := &windows{parts: parts, min: interval / 2, prev: make([]uint64, len(parts)), have: make([]bool, len(parts)), lastTick: now}
+	for i, p := range parts {
+		w.prev[i], w.have[i] = p.Read()
+	}
+	return w
+}
+
+// observe reads every part and reports the CPU used since the previous window. A sampler that was starved
+// (a saturated process) can receive two ticks back to back: a few milliseconds of CPU measured over a window
+// of one millisecond would look like a part using many times its cores, so a window shorter than half the
+// interval is not reported on its own but merged into the next one. A counter that went back means the part
+// restarted: that window is skipped.
+func (w *windows) observe(now time.Time, report func(name string, cpuMicros, wallMicros float64)) {
+	wall := now.Sub(w.lastTick)
+	if wall < w.min {
+		return // keep the previous reading: the next window spans both
+	}
+	for i, p := range w.parts {
+		cur, ok := p.Read()
+		if ok && w.have[i] && cur >= w.prev[i] {
+			report(p.Name, float64(cur-w.prev[i]), float64(wall.Microseconds()))
+		}
+		w.prev[i], w.have[i] = cur, ok
+	}
+	w.lastTick = now
 }
 
 func (s *PartSampler) add(name string, deltaMicros, wallMicros float64) {

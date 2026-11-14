@@ -99,3 +99,30 @@ func TestPartSamplerReportsCoresBusyAndSkipsARestart(t *testing.T) {
 		t.Fatalf("a restart must be skipped, got max %v cores", r.MaxCores)
 	}
 }
+
+// A starved sampler gets two ticks almost together. CPU measured over such a sliver must not be reported as
+// a part using many times its cores (this showed up on 2026-11-14 as a load generator "at 661%").
+func TestWindowsMergeASliverIntoTheNextWindowInsteadOfReportingAnImpossibleRate(t *testing.T) {
+	var counter uint64
+	part := Part{Name: "busy", VCPUs: 1, Read: func() (uint64, bool) { return counter, true }}
+	t0 := time.Unix(1000, 0)
+	w := newWindows([]Part{part}, t0, time.Second)
+	var rates []float64
+	report := func(_ string, cpu, wall float64) { rates = append(rates, cpu/wall) }
+
+	counter = 1_000_000 // one full second of CPU in the first second: 1 core
+	w.observe(t0.Add(time.Second), report)
+	counter += 10_000 // 10 ms of CPU, then a tick only 1 ms later: the sliver
+	w.observe(t0.Add(time.Second+time.Millisecond), report)
+	counter += 990_000 // the rest of that second: the next real tick spans both
+	w.observe(t0.Add(2*time.Second), report)
+
+	if len(rates) != 2 {
+		t.Fatalf("the sliver must not be reported on its own: got %d windows %v", len(rates), rates)
+	}
+	for _, r := range rates {
+		if r < 0.99 || r > 1.01 {
+			t.Fatalf("a part using one core must read as one core, got %v", rates)
+		}
+	}
+}
