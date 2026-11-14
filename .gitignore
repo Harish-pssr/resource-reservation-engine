@@ -6,3 +6,6 @@ bin/
 benchmark-scratch/
 project_brief.md
 logs/
+
+# per-buyer logs of the benchmark runs are large; the small JSON records of a run are what is committed
+docs/data/**/*.ndjson.gz

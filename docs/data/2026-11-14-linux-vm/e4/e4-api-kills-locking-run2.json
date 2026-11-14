@@ -1,0 +1,266 @@
+{
+  "plan": {
+    "name": "api-kills",
+    "strategies": [
+      "locking",
+      "optimistic",
+      "fastpath"
+    ],
+    "sigkills": 2,
+    "hook_crashes": 3,
+    "redis_restarts": 0,
+    "postgres_restarts": 0,
+    "waiting_room": false,
+    "about": "an API instance is killed at random moments (SIGKILL) and at exact named points (armed crash hooks) while buyers are mid-hold and mid-confirm"
+  },
+  "strategy": "locking",
+  "run": 2,
+  "items": 1000,
+  "buyers": 3000,
+  "arrival_window_s": 20,
+  "skew_zipf_exponent": 1.1,
+  "seed": 15839,
+  "payment_profile": "realistic",
+  "environment": {
+    "captured_at": "2026-11-14T16:53:57Z",
+    "os": "linux",
+    "arch": "amd64",
+    "num_cpu": 4,
+    "cpu_model": "Intel(R) Xeon(R) CPU @ 2.80GHz",
+    "mem_total_mb": 64293,
+    "power_state": "no-battery",
+    "go_version": "go1.27.0",
+    "git_commit": "cfbf836",
+    "git_dirty": false,
+    "logical_cpus": 16,
+    "kernel": "7.0.0-1017-gcp",
+    "machine_type": "n2-standard-16",
+    "backend_profile": "full",
+    "pinning": "postgres=0-2,8-10 api=3-4,11-12 bench=5-6,13-14 redis=7 spare=15",
+    "allowed_cpus": "5-6,13-14",
+    "cpu_steal_pct": 0
+  },
+  "store_settings": {
+    "postgres_version": "PostgreSQL 16.16 (Debian 16.16-1.pgdg13+1) on x86_64-pc-linux-gnu, compiled by gcc (Debian 14.2.0-19) 14.2.0, 64-bit",
+    "postgres_settings": {
+      "checkpoint_timeout": "300s",
+      "deadlock_timeout": "1000ms",
+      "default_transaction_isolation": "read committed",
+      "effective_cache_size": "5242888kB",
+      "fsync": "on",
+      "full_page_writes": "on",
+      "max_connections": "300",
+      "max_wal_size": "1024MB",
+      "shared_buffers": "163848kB",
+      "synchronous_commit": "on",
+      "wal_level": "replica",
+      "work_mem": "4096kB"
+    },
+    "redis_version": "7.4.12",
+    "redis_persistence": "none"
+  },
+  "started_at": "2026-11-14T17:00:00Z",
+  "wall_s": 27.539166458,
+  "client_summary": {
+    "run": "e4-api-kills-locking-r2",
+    "target_rate": 150,
+    "arrival_window_s": 20,
+    "wall_s": 27.524067845,
+    "planned": 3000,
+    "sent": 3000,
+    "skipped": 0,
+    "max_inflight": 135,
+    "schedule_lag_p50_ms": 0.5319445,
+    "schedule_lag_p99_ms": 1.1123112099999999,
+    "schedule_lag_max_ms": 1.667269,
+    "generator_kept_up": true,
+    "room_used": false,
+    "room_admitted": 0,
+    "room_turned_away": 0,
+    "room_gave_up": 0,
+    "room_errors": 0,
+    "queue_wait_p50_ms": 0,
+    "queue_wait_p99_ms": 0,
+    "queue_wait_max_ms": 0,
+    "fifo_inversions": 0,
+    "admitted_via_queue": 0,
+    "hold_held": 288,
+    "hold_unavailable": 2685,
+    "hold_lock_busy_after_retries": 0,
+    "hold_not_admitted": 0,
+    "hold_errors": 27,
+    "retries": 0,
+    "confirmed": 24,
+    "confirmed_items": 56,
+    "confirmed_after_expiry": 0,
+    "confirm_replayed": 0,
+    "hold_lost": 0,
+    "payment_failed": 7,
+    "payment_timeout": 0,
+    "payment_in_progress": 0,
+    "confirm_errors": 257,
+    "hold_p50_ms": 1.795946,
+    "hold_p95_ms": 2.8695316,
+    "hold_p99_ms": 3.4072860800000018,
+    "hold_max_ms": 5.538889,
+    "store_hold_p50_ms": 1.186992,
+    "store_hold_p99_ms": 2.6437762000000005,
+    "confirm_p50_ms": 2208.1189624999997,
+    "confirm_p99_ms": 7502.629059659993,
+    "bookings_per_s_arrival_window": 1.2,
+    "bookings_per_s_wall": 0.8719641346313503
+  },
+  "scheduled": [
+    {
+      "kind": "sigkill",
+      "at_ns": 3884814220
+    },
+    {
+      "kind": "sigkill",
+      "at_ns": 7286277902
+    },
+    {
+      "kind": "hook_crash",
+      "at_ns": 9526241215,
+      "point": "confirm.after_marker"
+    },
+    {
+      "kind": "hook_crash",
+      "at_ns": 12356262054,
+      "point": "confirm.after_payment"
+    },
+    {
+      "kind": "hook_crash",
+      "at_ns": 14504864600,
+      "point": "confirm.before_reply"
+    }
+  ],
+  "executed": [
+    {
+      "kind": "sigkill",
+      "at_ns": 3884814220,
+      "actual_at_ns": 3884859216,
+      "began_after_arrivals_ended": false,
+      "result": "done"
+    },
+    {
+      "kind": "sigkill",
+      "at_ns": 7286277902,
+      "actual_at_ns": 7286689048,
+      "began_after_arrivals_ended": false,
+      "result": "done"
+    },
+    {
+      "kind": "hook_crash",
+      "at_ns": 9526241215,
+      "point": "confirm.after_marker",
+      "actual_at_ns": 9527803012,
+      "began_after_arrivals_ended": false,
+      "result": "done"
+    },
+    {
+      "kind": "hook_crash",
+      "at_ns": 12356262054,
+      "point": "confirm.after_payment",
+      "actual_at_ns": 12356982750,
+      "began_after_arrivals_ended": false,
+      "result": "done"
+    },
+    {
+      "kind": "hook_crash",
+      "at_ns": 14504864600,
+      "point": "confirm.before_reply",
+      "actual_at_ns": 14505722554,
+      "began_after_arrivals_ended": false,
+      "result": "done"
+    }
+  ],
+  "api_sigkills_observed": 2,
+  "api_hook_crash_exits_observed": 3,
+  "api_other_exits": 0,
+  "api_restarts": 5,
+  "redis_restarts_done": 0,
+  "postgres_restarts_done": 0,
+  "armed_hooks_never_fired": 0,
+  "events_after_arrivals_ended": 0,
+  "total_api_kills": 5,
+  "server_metrics_last_process": {
+    "api": {
+      "counters": {
+        "requests{POST /holds,201}": 15,
+        "requests{POST /holds,409}": 361,
+        "requests{POST /holds/confirm,200}": 11,
+        "requests{POST /holds/confirm,402}": 4
+      },
+      "histograms": {
+        "latency{POST /holds/confirm}": {
+          "count": 15,
+          "mean_ms": 5676.494865133333,
+          "p50_ms_upper_bound": 10000,
+          "p99_ms_upper_bound": 10000,
+          "buckets_ms": {
+            "\u003c=10000": 8,
+            "\u003c=5000": 7
+          }
+        },
+        "latency{POST /holds}": {
+          "count": 376,
+          "mean_ms": 0.9274503031914894,
+          "p50_ms_upper_bound": 1,
+          "p99_ms_upper_bound": 2,
+          "buckets_ms": {
+            "\u003c=1": 291,
+            "\u003c=2": 82,
+            "\u003c=5": 3
+          }
+        }
+      }
+    },
+    "faults_enabled": true,
+    "inflight": 0,
+    "max_inflight": 16,
+    "outcomes": {
+      "confirm_replayed": 0,
+      "confirmed_after_expiry": 0,
+      "confirmed_in_time": 11,
+      "max_concurrent_payments_per_hold": 1,
+      "paid_but_lost": 0,
+      "payment_attempts": 15,
+      "payment_failed": 4,
+      "payment_in_progress_replies": 0,
+      "payment_timed_out": 0
+    },
+    "strategy": {
+      "db_pool_acquire_wait_ms_total": 13,
+      "db_pool_acquired_conns": 0,
+      "db_pool_acquires_that_waited": 2,
+      "db_pool_acquires_total": 431,
+      "db_pool_idle_conns": 2,
+      "db_pool_max_conns": 32,
+      "lock_busy": 0
+    }
+  },
+  "checker": {
+    "double_sold_items": 0,
+    "extra_bookings": 0,
+    "oversold": 0,
+    "stuck_holds": 0,
+    "confirmed_items_without_booking": 0,
+    "bookings_on_unconfirmed_items": 0,
+    "confirmed_bookings": 58,
+    "total_capacity": 1000
+  },
+  "reconcile": {
+    "client_confirmed_buyers": 24,
+    "client_confirmed_items": 56,
+    "db_bookings": 58,
+    "matched_buyers": 24,
+    "unknown_outcome_booked": 1,
+    "unknown_outcome_not_booked": 256,
+    "violation_confirmed_but_missing": 0,
+    "violation_unexplained_bookings": 0,
+    "violation_unknown_outcome_partial": 0
+  },
+  "violations": null,
+  "verdict": "all invariants held"
+}

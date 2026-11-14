@@ -1,0 +1,97 @@
+{
+  "strategy": "locking",
+  "rate_buyers_per_s": 100,
+  "first": {
+    "rate_buyers_per_s": 100,
+    "sustained": true,
+    "hold_p50_ms": 2.1175835,
+    "hold_p99_ms_judged": 3.93132964,
+    "bookings_per_s_arrival_window": 20.2,
+    "host_cpu_mean_percent": 1.9286620118239761,
+    "run_verdict": "all invariants held",
+    "double_sold_items": 0,
+    "record": "capacity-baseline-first.json",
+    "part_cpu": {
+      "api": {
+        "pinned_vcpus": 4,
+        "mean_cores_busy": 0.07549805592505993,
+        "max_cores_busy": 0.11998872106022034,
+        "mean_pct_of_pinned": 1.8874513981264982,
+        "max_pct_of_pinned": 2.9997180265055086,
+        "samples": 40
+      },
+      "bench": {
+        "pinned_vcpus": 4,
+        "mean_cores_busy": 0.06749826191975557,
+        "max_cores_busy": 0.10996986825609784,
+        "mean_pct_of_pinned": 1.6874565479938892,
+        "max_pct_of_pinned": 2.7492467064024457,
+        "samples": 40
+      },
+      "postgres": {
+        "pinned_vcpus": 6,
+        "mean_cores_busy": 0.09788025458344447,
+        "max_cores_busy": 0.15980634142778674,
+        "mean_pct_of_pinned": 1.6313375763907412,
+        "max_pct_of_pinned": 2.6634390237964456,
+        "samples": 40
+      },
+      "redis": {
+        "pinned_vcpus": 1,
+        "mean_cores_busy": 0.014877266910377059,
+        "max_cores_busy": 0.02806702489536109,
+        "mean_pct_of_pinned": 1.4877266910377058,
+        "max_pct_of_pinned": 2.806702489536109,
+        "samples": 40
+      }
+    }
+  },
+  "last": {
+    "rate_buyers_per_s": 100,
+    "sustained": true,
+    "hold_p50_ms": 1.9766005,
+    "hold_p99_ms_judged": 3.5518260299999986,
+    "bookings_per_s_arrival_window": 20.8,
+    "host_cpu_mean_percent": 1.8061359481518997,
+    "run_verdict": "all invariants held",
+    "double_sold_items": 0,
+    "record": "capacity-baseline-last.json",
+    "part_cpu": {
+      "api": {
+        "pinned_vcpus": 4,
+        "mean_cores_busy": 0.07076856663345159,
+        "max_cores_busy": 0.10999879001330985,
+        "mean_pct_of_pinned": 1.7692141658362897,
+        "max_pct_of_pinned": 2.7499697503327463,
+        "samples": 39
+      },
+      "bench": {
+        "pinned_vcpus": 4,
+        "mean_cores_busy": 0.06128147617896714,
+        "max_cores_busy": 0.09993883743149193,
+        "mean_pct_of_pinned": 1.5320369044741786,
+        "max_pct_of_pinned": 2.498470935787298,
+        "samples": 39
+      },
+      "postgres": {
+        "pinned_vcpus": 6,
+        "mean_cores_busy": 0.09217134013562847,
+        "max_cores_busy": 0.1495140097198056,
+        "mean_pct_of_pinned": 1.5361890022604745,
+        "max_pct_of_pinned": 2.4919001619967602,
+        "samples": 39
+      },
+      "redis": {
+        "pinned_vcpus": 1,
+        "mean_cores_busy": 0.014446966984873936,
+        "max_cores_busy": 0.027082687364346512,
+        "mean_pct_of_pinned": 1.4446966984873937,
+        "max_pct_of_pinned": 2.7082687364346514,
+        "samples": 39
+      }
+    }
+  },
+  "hold_p50_drift_percent": -6.657730379935425,
+  "hold_p99_drift_percent": -9.653314393651339,
+  "bookings_per_s_drift_percent": 2.9702970297029774
+}
