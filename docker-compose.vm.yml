@@ -1,0 +1,8 @@
+# Only for the Linux benchmark machine: gives each store its own cores so nothing competes with the
+# thing being measured. Loaded through COMPOSE_FILE by scripts/vm/env.sh; plain `docker compose up`
+# on a development machine does not use it.
+services:
+  postgres:
+    cpuset: "${PG_CPUS:-0-5}"
+  redis:
+    cpuset: "${REDIS_CPUS:-14}"

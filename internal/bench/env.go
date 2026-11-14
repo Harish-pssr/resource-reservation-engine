@@ -28,6 +28,13 @@ type Environment struct {
 	RedisVersion    string `json:"redis_version,omitempty"`
 	GitCommit       string `json:"git_commit,omitempty"`
 	GitDirty        bool   `json:"git_dirty"` // uncommitted changes: the numbers may not match any commit
+
+	// Where the parts ran. On a shared machine a figure means little without the core split.
+	Kernel      string   `json:"kernel,omitempty"`
+	MachineType string   `json:"machine_type,omitempty"`  // from BENCH_MACHINE_TYPE: an instance type, never a host name
+	Pinning     string   `json:"pinning,omitempty"`       // from BENCH_PINNING, e.g. "postgres=0-5 api=6-9 bench=10-13 redis=14 spare=15"
+	AllowedCPUs string   `json:"allowed_cpus,omitempty"`  // the cores THIS process may run on (the load generator side)
+	CPUStealPct *float64 `json:"cpu_steal_pct,omitempty"` // share of CPU time the hypervisor took, over a short window when the session started
 }
 
 // Capture reads the environment. Anything it cannot determine is left as "unknown" or empty rather
@@ -46,6 +53,13 @@ func Capture(ctx context.Context) Environment {
 			e.MemTotalMB = parseMemTotalMB(string(b))
 		}
 		e.PowerState = "no-battery" // a server VM
+		if b, err := os.ReadFile("/proc/sys/kernel/osrelease"); err == nil {
+			e.Kernel = strings.TrimSpace(string(b))
+		}
+		if b, err := os.ReadFile("/proc/self/status"); err == nil {
+			e.AllowedCPUs = parseAllowedCPUs(string(b))
+		}
+		e.CPUStealPct = measureSteal(ctx, 500*time.Millisecond)
 	case "windows":
 		cctx, cancel := context.WithTimeout(ctx, 15*time.Second)
 		defer cancel()
@@ -57,6 +71,7 @@ func Capture(ctx context.Context) Environment {
 			e.CPUModel, e.MemTotalMB, e.PowerState = parseWindows(string(out))
 		}
 	}
+	e.MachineType, e.Pinning = strings.TrimSpace(os.Getenv("BENCH_MACHINE_TYPE")), strings.TrimSpace(os.Getenv("BENCH_PINNING"))
 	if out, err := exec.CommandContext(ctx, "git", "rev-parse", "--short", "HEAD").Output(); err == nil {
 		e.GitCommit = strings.TrimSpace(string(out))
 		if st, err := exec.CommandContext(ctx, "git", "status", "--porcelain").Output(); err == nil {
@@ -116,4 +131,65 @@ func parseWindows(out string) (cpu string, memMB int, power string) {
 		}
 	}
 	return cpu, memMB, power
+}
+
+// parseAllowedCPUs reads the "Cpus_allowed_list" line of /proc/<pid>/status ("6-9", "0-5,8").
+func parseAllowedCPUs(status string) string {
+	for _, line := range strings.Split(status, "\n") {
+		if rest, ok := strings.CutPrefix(line, "Cpus_allowed_list:"); ok {
+			return strings.TrimSpace(rest)
+		}
+	}
+	return ""
+}
+
+// stealPercent is the share of CPU time taken by the hypervisor between two readings of the first
+// line of /proc/stat ("cpu user nice system idle iowait irq softirq steal ..."). ok is false when
+// either reading does not parse or no time passed.
+func stealPercent(before, after string) (pct float64, ok bool) {
+	read := func(stat string) (steal, total uint64, ok bool) {
+		line, _, _ := strings.Cut(stat, "\n")
+		f := strings.Fields(line)
+		if len(f) < 9 || f[0] != "cpu" {
+			return 0, 0, false
+		}
+		for i, v := range f[1:9] { // user nice system idle iowait irq softirq steal
+			n, err := strconv.ParseUint(v, 10, 64)
+			if err != nil {
+				return 0, 0, false
+			}
+			total += n
+			if i == 7 {
+				steal = n
+			}
+		}
+		return steal, total, true
+	}
+	s0, t0, ok0 := read(before)
+	s1, t1, ok1 := read(after)
+	if !ok0 || !ok1 || t1 <= t0 || s1 < s0 {
+		return 0, false
+	}
+	return float64(s1-s0) / float64(t1-t0) * 100, true
+}
+
+// measureSteal samples /proc/stat twice, window apart. nil when it cannot be read: it is never guessed.
+func measureSteal(ctx context.Context, window time.Duration) *float64 {
+	a, err := os.ReadFile("/proc/stat")
+	if err != nil {
+		return nil
+	}
+	select {
+	case <-time.After(window):
+	case <-ctx.Done():
+		return nil
+	}
+	b, err := os.ReadFile("/proc/stat")
+	if err != nil {
+		return nil
+	}
+	if pct, ok := stealPercent(string(a), string(b)); ok {
+		return &pct
+	}
+	return nil
 }

@@ -93,3 +93,44 @@ func TestCaptureNeverGuessesAndCarriesNoHostName(t *testing.T) {
 		t.Fatalf("basic fields missing: %+v", e)
 	}
 }
+
+func TestParseAllowedCPUs(t *testing.T) {
+	if got := parseAllowedCPUs("Name:\tbench\nCpus_allowed:\tffff\nCpus_allowed_list:\t10-13\nMems_allowed:\t1\n"); got != "10-13" {
+		t.Fatalf("got %q", got)
+	}
+	if got := parseAllowedCPUs("Name:\tx\n"); got != "" {
+		t.Fatalf("a missing line must give an empty answer, got %q", got)
+	}
+}
+
+func TestStealPercent(t *testing.T) {
+	// user nice system idle iowait irq softirq steal: total goes 1000 -> 2000, steal 10 -> 60 = 5%
+	pct, ok := stealPercent("cpu  300 0 300 300 50 0 0 10 0 0\n", "cpu  600 0 600 600 100 0 0 60 0 0\n")
+	if !ok || pct < 4.9 || pct > 5.1 {
+		t.Fatalf("steal %.2f%% ok=%v, want 5%%", pct, ok)
+	}
+	for name, c := range map[string][2]string{
+		"no time passed":    {"cpu  1 0 1 1 0 0 0 0\n", "cpu  1 0 1 1 0 0 0 0\n"},
+		"counter went back": {"cpu  9 0 9 9 0 0 0 5\n", "cpu  10 0 10 10 0 0 0 1\n"},
+		"garbage":           {"nope", "cpu  1 0 1 1 0 0 0 0\n"},
+		"short line":        {"cpu  1 2 3\n", "cpu  4 5 6\n"},
+	} {
+		if _, ok := stealPercent(c[0], c[1]); ok {
+			t.Fatalf("%s must not give a figure", name)
+		}
+	}
+}
+
+func TestCaptureRecordsPinningAndMachineTypeFromTheEnvironment(t *testing.T) {
+	t.Setenv("BENCH_PINNING", "postgres=0-5 api=6-9 bench=10-13 redis=14 spare=15")
+	t.Setenv("BENCH_MACHINE_TYPE", "n2-standard-16")
+	e := Capture(context.Background())
+	if e.Pinning != "postgres=0-5 api=6-9 bench=10-13 redis=14 spare=15" || e.MachineType != "n2-standard-16" {
+		t.Fatalf("pinning/machine not recorded: %+v", e)
+	}
+	t.Setenv("BENCH_PINNING", "")
+	t.Setenv("BENCH_MACHINE_TYPE", "")
+	if e := Capture(context.Background()); e.Pinning != "" || e.MachineType != "" {
+		t.Fatalf("unset values must stay empty, never guessed: %+v", e)
+	}
+}
