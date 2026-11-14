@@ -193,6 +193,19 @@ func TestValidation(t *testing.T) {
 	}
 }
 
+func TestEventSizeIsBoundedAtBothEnds(t *testing.T) {
+	f := newFixture(t, 0.5, time.Millisecond)
+	// the limit is 2,000,000 (maxEventItems)
+	for _, n := range []int{0, -5, 2_000_001} {
+		if code, out := f.post("/events", map[string]any{"name": "x", "items": n}); code != http.StatusBadRequest {
+			t.Fatalf("%d items must be refused: %d %v", n, code, out)
+		}
+	}
+	if code, out := f.post("/events", map[string]any{"name": "ok", "items": 10}); code != http.StatusCreated {
+		t.Fatalf("10 items must be accepted: %d %v", code, out)
+	}
+}
+
 func TestMetricsExplainWhatHappened(t *testing.T) {
 	f := newFixture(t, 0.5, time.Millisecond)
 	f.hold("alice", "r1", f.items[0])

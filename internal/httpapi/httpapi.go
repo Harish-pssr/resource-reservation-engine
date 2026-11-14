@@ -202,6 +202,10 @@ func decode(w http.ResponseWriter, r *http.Request, v any) bool {
 	return true
 }
 
+// maxEventItems bounds one event so a mistaken request cannot create an unbounded table. It is large enough for the
+// capacity ramp (D10: inventory sized from the rate), which needs about 2 million items at 25,000 buyers/s.
+const maxEventItems = 2_000_000
+
 // ---- handlers ----
 
 func (h *Handler) createEvent(w http.ResponseWriter, r *http.Request) {
@@ -212,8 +216,8 @@ func (h *Handler) createEvent(w http.ResponseWriter, r *http.Request) {
 	if !decode(w, r, &b) {
 		return
 	}
-	if h.d.Pool == nil || b.Items <= 0 || b.Items > 500000 {
-		fail(w, http.StatusBadRequest, "items must be between 1 and 500000")
+	if h.d.Pool == nil || b.Items <= 0 || b.Items > maxEventItems {
+		fail(w, http.StatusBadRequest, "items must be between 1 and "+strconv.Itoa(maxEventItems))
 		return
 	}
 	id, items, err := db.CreateEvent(r.Context(), h.d.Pool, b.Name, b.Items)
