@@ -2,6 +2,7 @@ package bench
 
 import (
 	"context"
+	"os"
 	"testing"
 	"time"
 
@@ -142,5 +143,23 @@ func TestCountProcessors(t *testing.T) {
 	}
 	if got := countProcessors("nothing here"); got != 0 {
 		t.Fatalf("got %d, want 0", got)
+	}
+}
+
+func TestCaptureUsesTheCommitFromTheArchiveWhenThereIsNoRepository(t *testing.T) {
+	dir := t.TempDir() // not a git repository
+	old, _ := os.Getwd()
+	if err := os.Chdir(dir); err != nil {
+		t.Skip("cannot change directory")
+	}
+	defer os.Chdir(old)
+	t.Setenv("BENCH_GIT_COMMIT", "abc1234")
+	e := Capture(context.Background())
+	if e.GitCommit != "abc1234" || e.GitDirty {
+		t.Fatalf("commit %q dirty %v, want abc1234 and not dirty", e.GitCommit, e.GitDirty)
+	}
+	t.Setenv("BENCH_GIT_COMMIT", "")
+	if e := Capture(context.Background()); e.GitCommit != "" {
+		t.Fatalf("no repository and no archive commit must stay empty, got %q", e.GitCommit)
 	}
 }

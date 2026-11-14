@@ -10,6 +10,8 @@ set -a
 . "${PINNING_FILE:-$ROOT/scripts/vm/pinning.env}" # PINNING_FILE: only for testing a different plan
 set +a
 export PATH="/usr/local/go/bin:$PATH"
+# an archive made from a commit carries its id in BUILD_COMMIT (there is no repository on the machine)
+[ -f "$ROOT/BUILD_COMMIT" ] && BENCH_GIT_COMMIT="$(tr -d '[:space:]' <"$ROOT/BUILD_COMMIT")" && export BENCH_GIT_COMMIT
 if [ "${PIN:-1}" = "1" ]; then
   export BENCH_PINNING="postgres=$PG_CPUS api=$API_CPUS bench=$BENCH_CPUS redis=$REDIS_CPUS spare=$SPARE_CPUS"
   # the override gives the two stores their cores; it is loaded wherever docker compose runs (also by bench e4's restarts)

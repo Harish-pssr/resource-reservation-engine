@@ -83,6 +83,10 @@ func Capture(ctx context.Context) Environment {
 		if st, err := exec.CommandContext(ctx, "git", "status", "--porcelain").Output(); err == nil {
 			e.GitDirty = len(strings.TrimSpace(string(st))) > 0
 		}
+	} else if c := strings.TrimSpace(os.Getenv("BENCH_GIT_COMMIT")); c != "" {
+		// A machine that received a clean archive of a commit has no repository: the scripts pass the commit the
+		// archive was made from. Such a tree is the commit, unmodified, so it is not dirty.
+		e.GitCommit = c
 	}
 	return e
 }
