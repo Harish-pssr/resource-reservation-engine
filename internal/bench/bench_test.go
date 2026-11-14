@@ -134,3 +134,13 @@ func TestCaptureRecordsPinningAndMachineTypeFromTheEnvironment(t *testing.T) {
 		t.Fatalf("unset values must stay empty, never guessed: %+v", e)
 	}
 }
+
+func TestCountProcessors(t *testing.T) {
+	info := "processor\t: 0\nmodel name\t: X\n\nprocessor\t: 1\nmodel name\t: X\n\nprocessor\t: 2\nprocessors in this line do not count: 9\n"
+	if got := countProcessors(info); got != 3 {
+		t.Fatalf("got %d, want 3", got)
+	}
+	if got := countProcessors("nothing here"); got != 0 {
+		t.Fatalf("got %d, want 0", got)
+	}
+}

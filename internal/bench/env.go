@@ -19,7 +19,7 @@ type Environment struct {
 	CapturedAt      string `json:"captured_at"`
 	OS              string `json:"os"`
 	Arch            string `json:"arch"`
-	NumCPU          int    `json:"num_cpu"`
+	NumCPU          int    `json:"num_cpu"` // the CPUs THIS process may use (Go respects pinning), not the machine size: see LogicalCPUs
 	CPUModel        string `json:"cpu_model"`
 	MemTotalMB      int    `json:"mem_total_mb"`
 	PowerState      string `json:"power_state"` // ac, battery, no-battery, or unknown. Never benchmark on battery.
@@ -30,6 +30,7 @@ type Environment struct {
 	GitDirty        bool   `json:"git_dirty"` // uncommitted changes: the numbers may not match any commit
 
 	// Where the parts ran. On a shared machine a figure means little without the core split.
+	LogicalCPUs int      `json:"logical_cpus,omitempty"` // CPUs the machine has (Linux), whatever this process is pinned to
 	Kernel      string   `json:"kernel,omitempty"`
 	MachineType string   `json:"machine_type,omitempty"`  // from BENCH_MACHINE_TYPE: an instance type, never a host name
 	Pinning     string   `json:"pinning,omitempty"`       // from BENCH_PINNING, e.g. "postgres=0-5 api=6-9 bench=10-13 redis=14 spare=15"
@@ -51,6 +52,9 @@ func Capture(ctx context.Context) Environment {
 		}
 		if b, err := os.ReadFile("/proc/meminfo"); err == nil {
 			e.MemTotalMB = parseMemTotalMB(string(b))
+		}
+		if b, err := os.ReadFile("/proc/cpuinfo"); err == nil {
+			e.LogicalCPUs = countProcessors(string(b))
 		}
 		e.PowerState = "no-battery" // a server VM
 		if b, err := os.ReadFile("/proc/sys/kernel/osrelease"); err == nil {
@@ -192,4 +196,16 @@ func measureSteal(ctx context.Context, window time.Duration) *float64 {
 		return &pct
 	}
 	return nil
+}
+
+// countProcessors counts the "processor : n" entries of /proc/cpuinfo: the CPUs the machine has,
+// unlike runtime.NumCPU, which follows the process's own affinity.
+func countProcessors(cpuinfo string) int {
+	n := 0
+	for _, line := range strings.Split(cpuinfo, "\n") {
+		if k, _, ok := strings.Cut(line, ":"); ok && strings.TrimSpace(k) == "processor" {
+			n++
+		}
+	}
+	return n
 }
