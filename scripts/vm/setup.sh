@@ -9,7 +9,7 @@ cd "$(dirname "${BASH_SOURCE[0]}")/../.."
 . scripts/vm/env.sh
 step() { printf '\n== %s\n' "$*"; }
 
-go_version="$(awk '/^go /{print $2}' go.mod)"
+go_version="$(awk '/^go /{print $2}' go.mod | tr -d '\r')"
 facts=benchmark-scratch/vm-setup
 mkdir -p "$facts"
 
