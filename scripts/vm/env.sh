@@ -5,7 +5,7 @@
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 set -a
 # shellcheck disable=SC1091
-. "$ROOT/scripts/vm/pinning.env"
+. "${PINNING_FILE:-$ROOT/scripts/vm/pinning.env}" # PINNING_FILE: only for testing a different plan
 set +a
 export PATH="/usr/local/go/bin:$PATH"
 if [ "${PIN:-1}" = "1" ]; then

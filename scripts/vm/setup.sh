@@ -45,7 +45,8 @@ go version
 
 step "switch off what would steal CPU or disk during a run (the Google guest agent stays: ssh needs it)"
 for unit in unattended-upgrades.service apt-daily.timer apt-daily-upgrade.timer apt-daily.service apt-daily-upgrade.service \
-  motd-news.timer packagekit.service fwupd.service snapd.service snapd.socket google-osconfig-agent.service google-cloud-ops-agent.service; do
+  motd-news.timer packagekit.service fwupd.service snapd.service snapd.socket google-osconfig-agent.service google-cloud-ops-agent.service \
+  google-cloud-ops-agent-fluent-bit.service google-cloud-ops-agent-opentelemetry-collector.service; do
   if systemctl cat "$unit" >/dev/null 2>&1; then
     sudo systemctl disable --now "$unit" >/dev/null 2>&1 && echo "stopped and disabled $unit" || echo "could not stop $unit (continuing)"
   fi
