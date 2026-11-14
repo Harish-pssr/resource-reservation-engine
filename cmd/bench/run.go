@@ -124,7 +124,7 @@ func freePort() (int, error) {
 	return l.Addr().(*net.TCPAddr).Port, nil
 }
 
-// reset puts the database and the gate in a known empty state before a run.
+// reset puts the database, the gate and the waiting room in a known empty state before a run.
 func (h *harness) reset(ctx context.Context) error {
 	admin, err := db.Open(ctx, h.dbURL, "", db.WithMaxConns(2))
 	if err != nil {
@@ -138,7 +138,25 @@ func (h *harness) reset(ctx context.Context) error {
 	}
 	rdb := redis.NewClient(&redis.Options{Addr: h.redis})
 	defer rdb.Close()
-	return fastpath.NewRedisGate(rdb, "rre:").Wipe(ctx)
+	return wipeRedisState(ctx, rdb)
+}
+
+// roomPrefix is the waiting room's key prefix: the API's ROOM_PREFIX, or rroom: when it is not set.
+func roomPrefix() string {
+	if p := strings.TrimSpace(os.Getenv("ROOM_PREFIX")); p != "" {
+		return p
+	}
+	return "rroom:"
+}
+
+// wipeRedisState empties everything a run can leave in Redis: the fast-path gate AND the waiting room's keys
+// (passes, tickets, heartbeats). Buyer ids repeat across the arms of a surge experiment, so a pass left over from
+// the previous arm would let a new buyer straight in and the room would not throttle.
+func wipeRedisState(ctx context.Context, rdb *redis.Client) error {
+	if err := fastpath.NewRedisGate(rdb, "rre:").Wipe(ctx); err != nil {
+		return err
+	}
+	return fastpathWipe(ctx, rdb, roomPrefix())
 }
 
 // startAPI launches the API binary as a separate process and waits until it answers.
