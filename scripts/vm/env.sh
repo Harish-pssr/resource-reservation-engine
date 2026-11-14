@@ -16,6 +16,6 @@ if [ "${PIN:-1}" = "1" ]; then
   export COMPOSE_FILE="docker-compose.yml:docker-compose.vm.yml"
 else
   export BENCH_PINNING="" BENCH_MACHINE_TYPE="" BENCH_BACKEND_PROFILE=""
-  unset BENCH_DB_POOL_SIZE
+  unset BENCH_DB_POOL_SIZE BENCH_MAX_INFLIGHT
   unset COMPOSE_FILE
 fi

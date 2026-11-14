@@ -24,6 +24,21 @@ func TestPoolSizeDefaultsTo32AndFollowsTheProfile(t *testing.T) {
 	}
 }
 
+func TestMaxInflightDefaultsTo20000AndFollowsTheProfile(t *testing.T) {
+	t.Setenv("BENCH_MAX_INFLIGHT", "")
+	if got := maxInflight(); got != 20000 {
+		t.Fatalf("default %d, want 20000", got)
+	}
+	t.Setenv("BENCH_MAX_INFLIGHT", "400000")
+	if got := maxInflight(); got != 400000 {
+		t.Fatalf("got %d, want 400000", got)
+	}
+	t.Setenv("BENCH_MAX_INFLIGHT", "-1")
+	if got := maxInflight(); got != 20000 {
+		t.Fatalf("a bad value must fall back to 20000, got %d", got)
+	}
+}
+
 func TestPartTextShowsPercentOfPinnedCoresAndNamesThePartThatIsBusy(t *testing.T) {
 	text := partText(map[string]bench.PartCPUSummary{
 		"postgres": {VCPUs: 6, MeanCores: 2.1, MeanPctOfPinned: 35, MaxPctOfPinned: 60},

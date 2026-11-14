@@ -66,6 +66,7 @@ type runParams struct {
 	} `json:"payment"`
 	HoldTTL     string `json:"hold_ttl"`
 	DBPoolSize  int    `json:"db_pool_size"`
+	MaxInflight int    `json:"generator_max_inflight"` // the load generator's safety cap on buyers in flight; arrivals beyond it are skipped
 	RetryPolicy string `json:"client_retry_policy"`
 	Scope       string `json:"scope"`
 
@@ -192,6 +193,16 @@ func poolSize() int {
 	return 32
 }
 
+// maxInflight is the generator's cap on buyers in flight: 20,000 unless BENCH_MAX_INFLIGHT says otherwise. A
+// surge with a waiting room keeps every waiting buyer in flight, so that experiment raises it. It is
+// recorded in every result.
+func maxInflight() int {
+	if n, err := strconv.Atoi(strings.TrimSpace(os.Getenv("BENCH_MAX_INFLIGHT"))); err == nil && n > 0 {
+		return n
+	}
+	return 20000
+}
+
 // parts lists what to sample for a run: the API process, this process (the load generator), and the two stores.
 func (h *harness) parts(ctx context.Context, apiPID int) []bench.Part {
 	h.partsOnce.Do(func() {
@@ -217,6 +228,7 @@ func (h *harness) parts(ctx context.Context, apiPID int) []bench.Part {
 
 // oneRun executes a single run of a strategy and writes its record.
 func (h *harness) oneRun(ctx context.Context, p runParams, pc payment.Config) (*record, error) {
+	p.MaxInflight = maxInflight()
 	if err := h.reset(ctx); err != nil {
 		return nil, err
 	}
@@ -248,7 +260,7 @@ func (h *harness) oneRun(ctx context.Context, p runParams, pc payment.Config) (*
 	res, err := loadgen.Run(ctx, loadgen.Config{
 		BaseURL: base, ItemIDs: itemIDs, Picker: workload.NewPicker(len(itemIDs), p.Skew, p.Seed),
 		Rate: float64(p.Buyers) / p.ArrivalWindowS, Duration: time.Duration(p.ArrivalWindowS * float64(time.Second)), RunID: runID,
-		Room: p.RoomRate > 0})
+		Room: p.RoomRate > 0, MaxInflight: p.MaxInflight})
 	samples := sampler.Stop()
 	partCPU := partSampler.Stop()
 	if err != nil {
