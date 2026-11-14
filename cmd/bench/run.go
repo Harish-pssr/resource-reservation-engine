@@ -11,6 +11,9 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
+	"strings"
+	"sync"
 	"time"
 
 	"github.com/redis/go-redis/v9"
@@ -87,6 +90,9 @@ type record struct {
 	Reconcile reconcile.Report    `json:"reconcile"`
 	Sustain   bench.Verdict       `json:"sustain"` // the D12 rules applied to this run
 	Verdict   string              `json:"verdict"`
+	// PartCPU says how much CPU each part (database, API, load generator, cache) really used, so a ceiling can be
+	// attributed to the part that ran out. Linux only; a part that cannot be read is absent.
+	PartCPU map[string]bench.PartCPUSummary `json:"part_cpu,omitempty"`
 }
 
 const scopeNote = "simulated payment and simulated demand; API, database and load generator share one machine unless the environment says otherwise"
@@ -102,6 +108,10 @@ type harness struct {
 	// allowFaults is true only for the failure experiments (E4). Throughput, capacity and surge runs must
 	// never run with fault injection enabled (D13): the hooks add polling load and could skew the numbers.
 	allowFaults bool
+
+	partsOnce sync.Once
+	cgroups   map[string]string  // docker compose service -> cgroup directory
+	pinned    map[string]float64 // part -> vCPUs it may use, from the core plan
 }
 
 func freePort() (int, error) {
@@ -173,6 +183,38 @@ func fetch(url string) (json.RawMessage, error) {
 	return io.ReadAll(resp.Body)
 }
 
+// poolSize is the API's database pool: 32 unless the benchmark profile says otherwise (BENCH_DB_POOL_SIZE). It is
+// recorded in every result.
+func poolSize() int {
+	if n, err := strconv.Atoi(strings.TrimSpace(os.Getenv("BENCH_DB_POOL_SIZE"))); err == nil && n > 0 {
+		return n
+	}
+	return 32
+}
+
+// parts lists what to sample for a run: the API process, this process (the load generator), and the two stores.
+func (h *harness) parts(ctx context.Context, apiPID int) []bench.Part {
+	h.partsOnce.Do(func() {
+		h.pinned = bench.ParsePinning(os.Getenv("BENCH_PINNING"))
+		h.cgroups = map[string]string{}
+		for _, svc := range []string{"postgres", "redis"} {
+			if dir := bench.ContainerCgroupDir(ctx, svc); dir != "" {
+				h.cgroups[svc] = dir
+			}
+		}
+	})
+	ps := []bench.Part{
+		{Name: "api", VCPUs: h.pinned["api"], Read: bench.ProcessCPU(func() int { return apiPID })},
+		{Name: "bench", VCPUs: h.pinned["bench"], Read: bench.SelfCPU()},
+	}
+	for _, svc := range []string{"postgres", "redis"} {
+		if dir, ok := h.cgroups[svc]; ok {
+			ps = append(ps, bench.Part{Name: svc, VCPUs: h.pinned[svc], Read: bench.CgroupCPU(dir)})
+		}
+	}
+	return ps
+}
+
 // oneRun executes a single run of a strategy and writes its record.
 func (h *harness) oneRun(ctx context.Context, p runParams, pc payment.Config) (*record, error) {
 	if err := h.reset(ctx); err != nil {
@@ -201,11 +243,14 @@ func (h *harness) oneRun(ctx context.Context, p runParams, pc payment.Config) (*
 	runID := fmt.Sprintf("%s-r%d", p.Strategy, p.Run)
 	started := time.Now()
 	sampler.Start(ctx)
+	partSampler := bench.NewPartSampler(h.parts(ctx, cmd.Process.Pid), time.Second)
+	partSampler.Start(ctx)
 	res, err := loadgen.Run(ctx, loadgen.Config{
 		BaseURL: base, ItemIDs: itemIDs, Picker: workload.NewPicker(len(itemIDs), p.Skew, p.Seed),
 		Rate: float64(p.Buyers) / p.ArrivalWindowS, Duration: time.Duration(p.ArrivalWindowS * float64(time.Second)), RunID: runID,
 		Room: p.RoomRate > 0})
 	samples := sampler.Stop()
+	partCPU := partSampler.Stop()
 	if err != nil {
 		return nil, err
 	}
@@ -229,7 +274,7 @@ func (h *harness) oneRun(ctx context.Context, p runParams, pc payment.Config) (*
 		return nil, err
 	}
 	r := &record{Params: p, Env: h.env, Stores: stores, StartedAt: started.UTC().Format(time.RFC3339), WallS: time.Since(started).Seconds(),
-		Client: res.Summary, Server: server, StoreLoad: bench.Summarize(samples), Samples: samples, Checker: chk, Reconcile: rec, Sustain: bench.Judge(res.Summary)}
+		Client: res.Summary, Server: server, StoreLoad: bench.Summarize(samples), Samples: samples, Checker: chk, Reconcile: rec, Sustain: bench.Judge(res.Summary), PartCPU: partCPU}
 	switch {
 	case !res.Summary.GeneratorOK:
 		r.Verdict = "generator did not keep up: do not use this run for latency"

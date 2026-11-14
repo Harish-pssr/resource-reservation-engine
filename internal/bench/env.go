@@ -30,12 +30,13 @@ type Environment struct {
 	GitDirty        bool   `json:"git_dirty"` // uncommitted changes: the numbers may not match any commit
 
 	// Where the parts ran. On a shared machine a figure means little without the core split.
-	LogicalCPUs int      `json:"logical_cpus,omitempty"` // CPUs the machine has (Linux), whatever this process is pinned to
-	Kernel      string   `json:"kernel,omitempty"`
-	MachineType string   `json:"machine_type,omitempty"`  // from BENCH_MACHINE_TYPE: an instance type, never a host name
-	Pinning     string   `json:"pinning,omitempty"`       // from BENCH_PINNING, e.g. "postgres=0-5 api=6-9 bench=10-13 redis=14 spare=15"
-	AllowedCPUs string   `json:"allowed_cpus,omitempty"`  // the cores THIS process may run on (the load generator side)
-	CPUStealPct *float64 `json:"cpu_steal_pct,omitempty"` // share of CPU time the hypervisor took, over a short window when the session started
+	LogicalCPUs    int      `json:"logical_cpus,omitempty"` // CPUs the machine has (Linux), whatever this process is pinned to
+	Kernel         string   `json:"kernel,omitempty"`
+	MachineType    string   `json:"machine_type,omitempty"`    // from BENCH_MACHINE_TYPE: an instance type, never a host name
+	BackendProfile string   `json:"backend_profile,omitempty"` // from BENCH_BACKEND_PROFILE: "full" or "small" (a deliberately constrained database)
+	Pinning        string   `json:"pinning,omitempty"`         // from BENCH_PINNING, e.g. "postgres=0-5 api=6-9 bench=10-13 redis=14 spare=15"
+	AllowedCPUs    string   `json:"allowed_cpus,omitempty"`    // the cores THIS process may run on (the load generator side)
+	CPUStealPct    *float64 `json:"cpu_steal_pct,omitempty"`   // share of CPU time the hypervisor took, over a short window when the session started
 }
 
 // Capture reads the environment. Anything it cannot determine is left as "unknown" or empty rather
@@ -76,6 +77,7 @@ func Capture(ctx context.Context) Environment {
 		}
 	}
 	e.MachineType, e.Pinning = strings.TrimSpace(os.Getenv("BENCH_MACHINE_TYPE")), strings.TrimSpace(os.Getenv("BENCH_PINNING"))
+	e.BackendProfile = strings.TrimSpace(os.Getenv("BENCH_BACKEND_PROFILE"))
 	if out, err := exec.CommandContext(ctx, "git", "rev-parse", "--short", "HEAD").Output(); err == nil {
 		e.GitCommit = strings.TrimSpace(string(out))
 		if st, err := exec.CommandContext(ctx, "git", "status", "--porcelain").Output(); err == nil {

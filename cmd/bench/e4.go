@@ -119,7 +119,7 @@ func (s *session) e4Env(h *harness, plan e4Plan, strategy, token string, arrival
 		ttl = plan.HoldTTL
 	}
 	env := []string{"DATABASE_URL=" + h.dbURL, "REDIS_ADDR=" + h.redis, "STRATEGY=" + spec.Strategy, "SCHEMA=" + spec.Schema,
-		"PAYMENT_PROFILE=" + s.profile, "HOLD_TTL=" + ttl, "DB_POOL_SIZE=32", "FAULTS_ENABLED=true", "ADMIN_TOKEN=" + token}
+		"PAYMENT_PROFILE=" + s.profile, "HOLD_TTL=" + ttl, fmt.Sprintf("DB_POOL_SIZE=%d", poolSize()), "FAULTS_ENABLED=true", "ADMIN_TOKEN=" + token}
 	if plan.PayMinMs > 0 {
 		env = append(env, fmt.Sprintf("PAYMENT_DELAY_MIN_MS=%d", plan.PayMinMs), fmt.Sprintf("PAYMENT_DELAY_MAX_MS=%d", plan.PayMaxMs))
 	}

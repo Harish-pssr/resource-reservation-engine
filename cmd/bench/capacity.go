@@ -53,7 +53,7 @@ func (s *session) step(ctx context.Context, sp stepSpec) (*record, error) {
 	}
 	p := runParams{Experiment: s.exp, Strategy: sp.Spec.Name, APIStrategy: sp.Spec.Strategy, Schema: sp.Spec.Schema,
 		Items: items, Buyers: buyers, ArrivalWindowS: sp.Duration.Seconds(), Skew: sp.Skew, Seed: sp.Seed,
-		PaymentProfile: s.profile, HoldTTL: s.ttl, DBPoolSize: 32, Scope: scopeNote,
+		PaymentProfile: s.profile, HoldTTL: s.ttl, DBPoolSize: poolSize(), Scope: scopeNote,
 		RetryPolicy: fmt.Sprintf("lock_busy only, max %d retries, base %v x2 full jitter, cap %v",
 			loadgen.DefaultRetry.MaxRetries, loadgen.DefaultRetry.Base, loadgen.DefaultRetry.Cap),
 		Phase: sp.Phase, Label: sp.Label, RoomRate: sp.RoomRate}
@@ -74,12 +74,14 @@ type stepResult struct {
 	Verdict        string  `json:"run_verdict"`
 	DoubleSold     int     `json:"double_sold_items"`
 	Record         string  `json:"record"`
+	// PartCPU attributes the step's load to the database, the API, the load generator and the cache.
+	PartCPU map[string]bench.PartCPUSummary `json:"part_cpu,omitempty"`
 }
 
 func condense(r *record, label string) stepResult {
 	return stepResult{Rate: r.Client.TargetRate, Sustained: r.Sustain.Sustained, Reason: r.Sustain.Reason,
 		HoldP50Ms: bench.HoldP50Ms(r.Client), HoldP99Ms: bench.HoldP99Ms(r.Client), BookingsPerSec: r.Client.BookingsPerSecArrival,
-		HostCPUMeanPct: r.StoreLoad.HostCPUMeanPct, Verdict: r.Verdict, DoubleSold: r.Checker.DoubleSoldItems, Record: "capacity-" + label + ".json"}
+		HostCPUMeanPct: r.StoreLoad.HostCPUMeanPct, Verdict: r.Verdict, DoubleSold: r.Checker.DoubleSoldItems, Record: "capacity-" + label + ".json", PartCPU: r.PartCPU}
 }
 
 func (s *session) show(phase string, r *record) {
@@ -90,6 +92,26 @@ func (s *session) show(phase string, r *record) {
 	fmt.Printf("  [%-8s] %6.0f buyers/s  %-44s hold p50 %6.1f ms, p99 %7.1f ms | %6.1f bookings/s | host CPU %s | checker %s\n",
 		phase, r.Client.TargetRate, verdict, bench.HoldP50Ms(r.Client), bench.HoldP99Ms(r.Client), r.Client.BookingsPerSecArrival,
 		cpuText(r.StoreLoad.HostCPUMeanPct), map[bool]string{true: "ok", false: "VIOLATION"}[r.Checker.OK()])
+	if t := partText(r.PartCPU); t != "" {
+		fmt.Printf("             of its cores: %s\n", t)
+	}
+}
+
+// partText shows how busy each part was relative to the cores it may use, e.g. "pg 35% api 87% gen 12% redis 3%".
+func partText(parts map[string]bench.PartCPUSummary) string {
+	var out []string
+	for _, k := range []struct{ key, label string }{{"postgres", "pg"}, {"api", "api"}, {"bench", "gen"}, {"redis", "redis"}} {
+		p, ok := parts[k.key]
+		if !ok {
+			continue
+		}
+		if p.VCPUs > 0 {
+			out = append(out, fmt.Sprintf("%s %.0f%% (max %.0f%%)", k.label, p.MeanPctOfPinned, p.MaxPctOfPinned))
+		} else {
+			out = append(out, fmt.Sprintf("%s %.1f cores", k.label, p.MeanCores))
+		}
+	}
+	return strings.Join(out, "  ")
 }
 
 func cpuText(p float64) string {

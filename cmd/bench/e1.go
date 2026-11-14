@@ -85,7 +85,7 @@ func e1(args []string) error {
 		for _, spec := range specs {
 			p := runParams{Experiment: "e1", Strategy: spec.Name, APIStrategy: spec.Strategy, Schema: spec.Schema, Run: run,
 				Items: *items, Buyers: *buyers, ArrivalWindowS: arrival.Seconds(), Skew: *skew, Seed: *seed + uint64(run),
-				PaymentProfile: *profile, HoldTTL: ttl, DBPoolSize: 32,
+				PaymentProfile: *profile, HoldTTL: ttl, DBPoolSize: poolSize(),
 				RetryPolicy: fmt.Sprintf("lock_busy only, max %d retries, base %v x2 full jitter, cap %v",
 					loadgen.DefaultRetry.MaxRetries, loadgen.DefaultRetry.Base, loadgen.DefaultRetry.Cap),
 				Scope: scopeNote}
