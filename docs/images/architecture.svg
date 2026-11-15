@@ -1,0 +1,86 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1120 580" role="img" aria-labelledby="t d" font-family="Segoe UI, Helvetica, Arial, sans-serif">
+  <title id="t">Architecture of the reservation engine</title>
+  <desc id="d">A buyer joins a Redis waiting room, then places a hold through the API. A strategy (Redis claim gate in front of locking, locking, optimistic, or the naive control) reserves the item in PostgreSQL, which is the system of record and holds a unique index on confirmed bookings. The API calls a simulated payment, then confirms. An independent checker reads only PostgreSQL. Fault hooks can crash the API at named points.</desc>
+  <defs>
+    <marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#4b5575"/></marker>
+    <style>
+      .bg{fill:#fff}
+      .zone{fill:#f7f8fc;stroke:#c9cfe0;stroke-width:1.5;stroke-dasharray:6 5}
+      .box{fill:#eef1f8;stroke:#7a86a8;stroke-width:1.5}
+      .lane{fill:#fff;stroke:#a5aecb;stroke-width:1.2}
+      .dash{stroke-dasharray:5 4}
+      .db{fill:#fde8ec;stroke:#d24c68;stroke-width:1.8}
+      .hint{fill:#eef1f8;stroke:#7a86a8;stroke-width:1.5;stroke-dasharray:5 4}
+      .ext{fill:#fff;stroke:#7a86a8;stroke-width:1.5;stroke-dasharray:3 4}
+      .ar{stroke:#4b5575;stroke-width:1.8;fill:none;marker-end:url(#ar)}
+      .ard{stroke:#7a86a8;stroke-width:1.5;fill:none;stroke-dasharray:5 4;marker-end:url(#ar)}
+      .h{font-size:15px;font-weight:700;fill:#1b2236;text-anchor:middle}
+      .t{font-size:13px;fill:#1b2236;text-anchor:middle}
+      .s{font-size:11.5px;fill:#5d6985;text-anchor:middle}
+      .z{font-size:12px;fill:#5d6985;font-weight:600}
+      .n circle{fill:#e23e5b} .n text{font-size:12px;font-weight:700;fill:#fff;text-anchor:middle;dominant-baseline:central}
+    </style>
+  </defs>
+  <rect class="bg" width="1120" height="580"/>
+  <rect class="zone" x="150" y="60" width="870" height="480" rx="14"/><text class="z" x="166" y="82">Your service</text>
+
+  <!-- buyer -->
+  <rect class="box" x="16" y="190" width="110" height="64" rx="10"/><text class="h" x="71" y="214">Buyer</text><text class="s" x="71" y="233">browser or</text><text class="s" x="71" y="246">load generator</text>
+
+  <!-- waiting room -->
+  <rect class="box" x="176" y="130" width="160" height="150" rx="12"/><text class="h" x="256" y="152">Waiting room</text>
+  <rect class="lane" x="188" y="164" width="136" height="44" rx="8"/><text class="t" x="256" y="183">FIFO queue</text><text class="s" x="256" y="199">first come, first in</text>
+  <rect class="lane" x="188" y="216" width="136" height="52" rx="8"/><text class="t" x="256" y="235">admission pass</text><text class="s" x="256" y="251">rate R per second</text>
+
+  <!-- API -->
+  <rect class="box" x="386" y="110" width="170" height="190" rx="12"/><text class="h" x="471" y="132">API</text>
+  <rect class="lane" x="398" y="144" width="146" height="36" rx="8"/><text class="t" x="471" y="167">hold</text>
+  <rect class="lane" x="398" y="188" width="146" height="36" rx="8"/><text class="t" x="471" y="211">confirm</text>
+  <rect class="lane" x="398" y="232" width="146" height="36" rx="8"/><text class="t" x="471" y="255">release</text>
+  <text class="s" x="471" y="288">idempotent by request id</text>
+
+  <!-- strategy -->
+  <rect class="box" x="606" y="90" width="210" height="236" rx="12"/><text class="h" x="711" y="112">Strategy</text>
+  <rect class="lane" x="618" y="124" width="186" height="44" rx="8"/><text class="t" x="711" y="143">Fast path</text><text class="s" x="711" y="159">Redis claim gate, then locking</text>
+  <rect class="lane" x="618" y="176" width="186" height="44" rx="8"/><text class="t" x="711" y="195">Locking</text><text class="s" x="711" y="211">FOR UPDATE NOWAIT, ordered</text>
+  <rect class="lane" x="618" y="228" width="186" height="44" rx="8"/><text class="t" x="711" y="247">Optimistic</text><text class="s" x="711" y="263">conditional update, re-read</text>
+  <rect class="lane dash" x="618" y="280" width="186" height="36" rx="8"/><text class="t" x="711" y="303">Naive (negative control)</text>
+
+  <!-- postgres -->
+  <path class="db" d="M868,150 a64,11 0 0 1 128,0 v156 a64,11 0 0 1 -128,0 z"/><path class="db" fill="none" d="M868,150 a64,11 0 0 0 128,0"/>
+  <text class="h" x="932" y="206">PostgreSQL</text><text class="t" x="932" y="226">system of record</text><text class="s" x="932" y="246">items, holds, bookings</text><text class="s" x="932" y="263">unique index: one</text><text class="s" x="932" y="278">confirmed booking per item</text>
+
+  <!-- redis -->
+  <path class="hint" d="M176,420 a80,10 0 0 1 160,0 v62 a80,10 0 0 1 -160,0 z"/><path class="hint" fill="none" d="M176,420 a80,10 0 0 0 160,0"/>
+  <text class="h" x="256" y="452">Redis</text><text class="s" x="256" y="470">queue, passes, claim gate</text><text class="s" x="256" y="486">a hint: never decides a seat</text>
+
+  <!-- payment -->
+  <rect class="ext" x="396" y="440" width="150" height="68" rx="10"/><text class="h" x="471" y="468">Payment</text><text class="s" x="471" y="486">simulated: delay,</text><text class="s" x="471" y="500">failure, timeout</text>
+
+  <!-- checker -->
+  <rect class="box" x="866" y="440" width="132" height="68" rx="10"/><text class="h" x="932" y="468">Checker</text><text class="s" x="932" y="486">reads only</text><text class="s" x="932" y="500">the database</text>
+
+  <!-- fault hooks -->
+  <rect class="lane dash" x="406" y="14" width="130" height="38" rx="8"/><text class="t" x="471" y="31">Fault hooks</text><text class="s" x="471" y="45">off by default</text>
+
+  <!-- arrows -->
+  <path class="ar" d="M126,222 H174"/>
+  <path class="ar" d="M336,222 H384"/>
+  <path class="ar" d="M556,205 H604"/>
+  <path class="ar" d="M816,206 H870"/>
+  <path class="ar" d="M471,300 V438"/>
+  <path class="ard" d="M256,282 V410"/>
+  <path class="ard" d="M660,326 V380 H300 V420"/>
+  <path class="ard" d="M471,52 V108"/>
+  <path class="ard" d="M932,436 V324"/>
+  
+  <!-- step numbers -->
+  <g class="n"><circle cx="150" cy="222" r="11"/><text x="150" y="222">1</text></g>
+  <g class="n"><circle cx="360" cy="222" r="11"/><text x="360" y="222">2</text></g>
+  <g class="n"><circle cx="580" cy="205" r="11"/><text x="580" y="205">3</text></g>
+  <g class="n"><circle cx="843" cy="206" r="11"/><text x="843" y="206">4</text></g>
+  <g class="n"><circle cx="471" cy="372" r="11"/><text x="471" y="372">5</text></g>
+  
+  <!-- legend -->
+  <text class="z" x="16" y="560">1 join the queue   2 admitted with a pass   3 hold or confirm   4 reserve or book in PostgreSQL   5 pay (simulated)   |   dashed = a hint, a control, or a read-only check</text>
+</svg>
