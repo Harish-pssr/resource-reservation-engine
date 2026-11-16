@@ -140,7 +140,7 @@ The baseline run (locking at 100 buyers/s) opens and closes each invocation. How
 
 ## E3: surge protection with a waiting room
 
-On the full machine the engine's capacity is far above what one load generator can offer several multiples of, so this experiment uses the **small backend**: PostgreSQL on one core and an API pool of 8, with the strategy **locking** (the service's default). Its capacity was measured in the same session, and the waiting room admitted buyers at R = 0.8 x C. Each arm lasts 10 s. The brief asked for 5x, 10x and higher; one machine's generator saturates above about 2x of this backend, so 1.5x, 2x and 2.5x were run.
+On the full machine the engine's capacity is far above what one load generator can offer several multiples of, so this experiment uses the **small backend**: PostgreSQL on one core and an API pool of 8, with the strategy **locking** (the service's default). Its capacity was measured in the same session, and the waiting room admitted buyers at R = 0.8 x C. Each arm lasts 10 s. The original plan was 5x, 10x and higher; one machine's generator saturates above about 2x of this backend, so 1.5x, 2x and 2.5x were run.
 
 Capacity of the small backend, measured in the same session: **2,835 buyers/s** (latency run at 1,984/s). The waiting room admitted R = 0.8 x C = **2,268 buyers/s**.
 
