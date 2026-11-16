@@ -116,3 +116,7 @@ About 7,900 lines of Go (non-test) and 168 test functions, including tests that 
 ## Status
 
 Built and measured. Not done: a scaling run across several API instances, surge measurements above 2x, a real payment provider, and user authentication. These and the other limits are in [docs/limitations.md](docs/limitations.md).
+
+## Licence
+
+MIT, see [LICENSE](LICENSE).
