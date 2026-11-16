@@ -811,7 +811,7 @@ views.failures = {
 async function demo(el, point) {
   if (!state.token) return needToken();
   const log = $("#fl-log", el);
-  const say = (kind, t) => { log.insertAdjacentHTML("beforeend", `<div class="note ${kind}">${t}</div>`); };
+  const say = (kind, t) => { log.insertAdjacentHTML("beforeend", `<div class="note ${kind || "neutral"}">${t}</div>`); };
   log.innerHTML = "";
   try {
     const list = await loadEvents();
@@ -844,7 +844,7 @@ async function demo(el, point) {
     say("", "The server is back. The client retries the very same request:");
     if (point === "hold.before_reply") {
       const again = await hold(), v = again.body?.items?.[0]?.hold_version;
-      say(again.status === 201 && v === 1 ? "good" : "bad", `The retry returned status ${again.status} with hold <b>version ${v}</b>. The hold had already committed before the crash, so the retry gets the same hold back instead of creating a second one. Seat ${free.seq} now shows as held in the <a href="#/inventory">seat map</a>.`);
+      say(again.status === 201 && v === (free.version ?? 0) + 1 ? "good" : "bad", `The retry returned status ${again.status} with hold <b>version ${v}</b>. The hold had already committed before the crash, so the retry gets the same hold back instead of creating a second one. Seat ${free.seq} now shows as held in the <a href="#/inventory">seat map</a>.`);
     } else {
       const again = await api("/holds/confirm", { method: "POST", body: { buyer_id: buyer, items: refs } });
       say(again.status === 200 && again.body?.replayed ? "good" : "bad", `The retry returned status ${again.status}${again.body?.replayed ? ", marked <b>replayed</b>" : ""}. The booking had already committed before the crash, so the retry is recognised: no second booking, and no second payment. Seat ${free.seq} is booked once.`);

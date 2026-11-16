@@ -50,6 +50,30 @@ With spread demand all three are identical; under hot-item contention **locking'
 
 The queueing moves to the buyer (about 15 s at p99 at 2x), in order, with nobody turned away. It was measured up to 2x only. The numbers are explained, and every limit is stated, in [docs/benchmarks.md](docs/benchmarks.md) and [docs/limitations.md](docs/limitations.md).
 
+## The console
+
+The API serves a small console at its root. These screenshots come from a development run on a laptop (a 90-buyer surge, a few bookings by hand and a crash demo): they show the interface, **not benchmark numbers**, which are in [docs/benchmarks.md](docs/benchmarks.md).
+
+**Overview.** Each card asks one plain question and answers it in words, with the numbers underneath.
+
+<p align="center"><img src="docs/images/console-overview.png" alt="The overview page: a verdict banner and cards answering whether buyers get answers, whether any seat is sold twice, whether it is fast, whether something is the bottleneck, what the Redis fast path did, and what happened to payments." width="800"></p>
+
+**Live seat map** and **bookings**, grouped by purchase as tickets (the ledger keeps one row per seat; the console groups the seats bought in one request).
+
+<p align="center"><img src="docs/images/console-seat-map.png" alt="The live seat map of an event with free and booked seats and a legend." width="400"> <img src="docs/images/console-bookings.png" alt="Bookings shown as ticket cards, one per purchase, listing the seats and booking ids." width="400"></p>
+
+**Surge.** Send a crowd at an event and watch the outcome fill in.
+
+<p align="center"><img src="docs/images/console-surge.png" alt="The surge page: controls for the crowd, and the outcome as tiles: bookings confirmed, holds granted, seats taken by others, lock busy, turned away, paid but lost, payment failed, errors." width="800"></p>
+
+**Failures.** A guided demo arms a crash at a named point, drives a request, watches the server really exit, waits for it to come back, retries the very same request, and explains what it sees: the hold had already committed, so the retry gets the same hold back instead of creating a second one.
+
+<p align="center"><img src="docs/images/console-failure-demo.png" alt="The guided crash demo: the server was killed before the hold reply, and the retry returned the same hold." width="800"></p>
+
+**Checker.** Reads only the database and verifies the rules that must always hold.
+
+<p align="center"><img src="docs/images/console-checker.png" alt="The checker page: every rule passes, with zero found for each." width="800"></p>
+
 ## Run it
 
 ```bash
